@@ -242,8 +242,8 @@ class SecurityAccessChecker(AccessChecker["Session"]):
         if not Model:
             return True
 
-        # Проверяем через search_count
-        check_filter = [("id", "in", record_ids)] + domain
+        # Проверяем через search_count.
+        check_filter = [("id", "in", record_ids), domain]
         count = await Model.search_count(filter=check_filter)
 
         return count == len(record_ids)

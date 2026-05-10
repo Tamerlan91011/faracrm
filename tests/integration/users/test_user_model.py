@@ -115,7 +115,7 @@ class TestUserCreate:
         """Test creating admin user."""
         admin = await user_factory(
             name="Admin User",
-            login="admin",
+            login="admin" + str(datetime.now(timezone.utc)),
             is_admin=True,
         )
 

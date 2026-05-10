@@ -13,6 +13,13 @@ from backend.base.system.dotorm.dotorm.fields import (
 )
 from backend.base.system.dotorm.dotorm.model import DotModel
 from backend.base.crm.users.models.users import User
+from backend.base.system.dotorm.dotorm.access import get_access_session
+
+
+def _default_current_user():
+    """Текущий user_id из сессии (или None, если сессии нет)."""
+    session = get_access_session()
+    return session.user_id if session else None
 
 
 class SavedFilter(DotModel):
@@ -31,8 +38,11 @@ class SavedFilter(DotModel):
     # JSON с фильтрами: [["field", "op", "value"], "and", ...]
     filter_data: str = Text(required=True)
 
-    # Пользователь-владелец фильтра
-    user_id: "User | None" = Many2one(relation_table=User)
+    # Пользователь-владелец фильтра. По умолчанию — текущий из сессии.
+    user_id: "User | None" = Many2one(
+        relation_table=User,
+        default=_default_current_user,
+    )
 
     # Глобальный фильтр (доступен всем)
     is_global: bool = Boolean(default=False)

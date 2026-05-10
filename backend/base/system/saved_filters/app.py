@@ -1,5 +1,11 @@
 """Saved filters application."""
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
+    from backend.base.system.core.enviroment import Environment
+
 from backend.base.system.core.app import App
 from backend.base.crm.security.acl_post_init_mixin import ACL
 
@@ -23,3 +29,83 @@ class SavedFiltersApp(App):
     BASE_USER_ACL = {
         "saved_filter": ACL.FULL,
     }
+
+    async def post_init(self, app: "FastAPI"):
+        await super().post_init(app)
+        env: "Environment" = app.state.env
+        await self._init_saved_filter_rules(env)
+
+    async def _init_saved_filter_rules(self, env: "Environment"):
+        """
+        Access rules для модели saved_filter.
+
+        Цели:
+          1. Пользователь видит ТОЛЬКО фильтры, где он создатель,
+             либо глобальные (user_id IS NULL — кладутся через post_init,
+             например «Мои файлы» из attachments).
+          2. Пользователь может удалять ТОЛЬКО свои фильтры
+             (свои = user_id == текущий). Глобальные удалять нельзя —
+             у них user_id IS NULL, что не равно текущему id.
+        """
+        from backend.base.crm.security.models.rules import Rule
+
+        model = await env.models.model.search(
+            filter=[("name", "=", "saved_filter")],
+            limit=1,
+        )
+        if not model:
+            return
+        model_id = model[0]
+
+        base_user_role = await env.models.role.search(
+            filter=[("code", "=", "base_user")],
+            fields=["id"],
+            limit=1,
+        )
+        if not base_user_role:
+            return
+        base_user_role_id = base_user_role[0]
+
+        rules = [
+            {
+                "name": "User can read own and global saved filters",
+                "domain": [
+                    ("user_id", "=", "{{user_id}}"),
+                    "or",
+                    ("user_id", "=", None),
+                ],
+                "perm_create": False,
+                "perm_read": True,
+                "perm_update": False,
+                "perm_delete": False,
+            },
+            {
+                "name": "User can delete only own saved filters",
+                "domain": [("user_id", "=", "{{user_id}}")],
+                "perm_create": False,
+                "perm_read": False,
+                "perm_update": False,
+                "perm_delete": True,
+            },
+        ]
+
+        for rule_data in rules:
+            existing = await env.models.rule.search(
+                filter=[("name", "=", rule_data["name"])],
+                limit=1,
+            )
+            if existing:
+                continue
+            await env.models.rule.create(
+                payload=Rule(
+                    name=rule_data["name"],
+                    active=True,
+                    model_id=model_id,
+                    role_id=base_user_role_id,
+                    domain=rule_data["domain"],
+                    perm_create=rule_data["perm_create"],
+                    perm_read=rule_data["perm_read"],
+                    perm_update=rule_data["perm_update"],
+                    perm_delete=rule_data["perm_delete"],
+                ),
+            )
