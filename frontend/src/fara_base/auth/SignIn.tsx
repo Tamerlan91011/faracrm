@@ -14,6 +14,7 @@ import {
 import * as yup from 'yup';
 import { useForm, yupResolver } from '@mantine/form';
 import { useDispatch } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   IconBrandTelegram,
@@ -120,6 +121,7 @@ const DEFAULT_SOCIAL_LINKS: { type: string; url: string }[] = [
 
 export default function SignIn() {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { t, i18n } = useTranslation('common');
   const [login, { isLoading: loading }] = useLoginMutation();
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -156,6 +158,21 @@ export default function SignIn() {
       setLoginError(null);
       const session = await login(values).unwrap();
       dispatch(storeSession({ session }));
+
+      // Редирект на домашнюю страницу из профиля пользователя.
+      // Делаем это здесь (а не в роутере по path="/"), т.к. при логине URL
+      // может быть не "/" — пользователь мог потерять сессию на любой странице,
+      // и тогда роутовый редирект не сработает. home_page приходит в ответе
+      // /signin вместе с сессией, отдельный запрос не нужен.
+      const homePage = session?.user_id?.home_page;
+      if (
+        homePage &&
+        homePage.startsWith('/') &&
+        homePage !== '/' &&
+        !homePage.includes('://')
+      ) {
+        navigate(homePage, { replace: true });
+      }
     } catch {
       setLoginError(t('auth.invalidCredentials', 'Неверный логин или пароль'));
     }
