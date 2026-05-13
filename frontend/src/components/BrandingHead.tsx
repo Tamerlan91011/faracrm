@@ -1,34 +1,36 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import {
   useGetPublicConfigQuery,
   brandingFileUrl,
+  manifestUrl,
 } from '@/services/config/config';
 
 /**
- * Динамическая подмена favicon, <title> и PWA-манифеста под
- * настройки текущей компании (поля favicon_id / app_title в Company).
+ * Динамическая подмена favicon, <title> и PWA-манифеста под настройки
+ * текущей компании (поля favicon_id / manifest_* в Company).
  *
- * Как это вообще работает (отвечает на вопрос «ведь это берётся из index.html»):
- * — index.html выдаётся статикой и в нём только дефолтные значения
- *   (<title>F.A.R.A.</title>, <link rel="icon" href="/logo-mark.svg">,
- *   <link rel="manifest" href="/manifest.json">).
- * — После загрузки JS этот компонент уже в рантайме редактирует те же
- *   теги в <head>: document.title, href у link[rel=icon] и link[rel=manifest].
- *   Браузер подхватывает новые значения сразу (вкладка/favicon).
- * — Для PWA генерируется новый manifest как Blob-URL: туда подставляем
- *   app_title в name/short_name и URL фавикона в icons[*].src. Браузер
- *   читает manifest при /показе/ установки PWA, поэтому для новых установок
- *   значения будут уже кастомные.
+ * Как работает:
+ * — index.html выдаётся статикой с дефолтными значениями:
+ *     <title>F.A.R.A.</title>
+ *     <link rel="icon" href="/logo-mark.svg">
+ *     <link rel="manifest" href="/api/public/manifest.json">
+ * — После загрузки JS этот компонент уже в рантайме редактирует:
+ *     - document.title — берёт name из manifest_json (бэк парсит в app_title)
+ *     - href у link[rel=icon] / shortcut icon / apple-touch-icon
+ *       (если в Company загружен favicon_id)
+ *     - href у link[rel=manifest] — добавляем ?v=<manifest_version>
+ *       для cache-bust. Сам манифест отдаёт бэк из /api/public/manifest.json
+ *       с no-cache + ETag, поэтому при правке через админку Android
+ *       перечитывает его при следующем открытии PWA.
  *
  * Что НЕ изменится:
- * — Уже установленные PWA. ОС кеширует name/icon на момент установки,
- *   юзеру придётся переустановить (или удалить ярлык) чтобы подхватить новый.
+ * — Уже установленные PWA. ОС кеширует name/icon на момент установки;
+ *   юзеру придётся переустановить (или удалить ярлык) чтобы подхватить новые.
  * — og:title и др. SEO-теги — поисковики/соцсети читают серверный HTML
  *   до выполнения JS. Если нужна полноценная SEO-подмена, делать на бэке.
  */
 export function BrandingHead() {
   const { data: publicConfig } = useGetPublicConfigQuery();
-  const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     const branding = publicConfig?.branding;
@@ -41,104 +43,32 @@ export function BrandingHead() {
     }
 
     // ---- 2. Favicon (link[rel=icon] + apple-touch-icon) ----------------
-    // Если на бэке есть favicon — подсовываем его во все link-теги иконок.
-    // Иначе оставляем то, что прописано в index.html.
+    // Если на бэке загружен favicon — подсовываем его во все link-теги
+    // иконок. К URL клеим favicon_version (id Attachment-а): он меняется
+    // при каждой загрузке новой иконки, поэтому браузер видит «новый» URL
+    // и берёт файл из сети.
     if (branding.has_favicon) {
-      const url = brandingFileUrl('favicon_id');
+      const url = brandingFileUrl('favicon_id', branding.favicon_version);
       setIconHref('icon', url);
       setIconHref('shortcut icon', url);
       setIconHref('apple-touch-icon', url);
     }
 
-    // ---- 3. PWA-манифест -----------------------------------------------
-    // Подменяем только если есть что менять (имя или иконка).
-    if (title || branding.has_favicon) {
-      const iconUrl = branding.has_favicon
-        ? toAbsoluteUrl(brandingFileUrl('favicon_id'))
-        : null;
-
-      // Дефолты из /manifest.json — иначе у браузера может «съехать»
-      // background_color/theme_color. Берём только то, что патчим.
-      const manifest: Record<string, unknown> = {
-        name: title || 'FARA CRM',
-        short_name: title || 'FARA',
-        description: 'FARA CRM - Customer Relationship Management',
-        start_url: '/',
-        display: 'standalone',
-        background_color: '#ffffff',
-        theme_color: '#228be6',
-        icons: iconUrl
-          ? [
-              {
-                src: iconUrl,
-                sizes: '192x192',
-                type: 'image/png',
-                purpose: 'any',
-              },
-              {
-                src: iconUrl,
-                sizes: '512x512',
-                type: 'image/png',
-                purpose: 'any maskable',
-              },
-            ]
-          : [
-              {
-                src: '/icon-192.png',
-                sizes: '192x192',
-                type: 'image/png',
-                purpose: 'any maskable',
-              },
-              {
-                src: '/icon-512.png',
-                sizes: '512x512',
-                type: 'image/png',
-                purpose: 'any maskable',
-              },
-            ],
-      };
-
-      // Освобождаем предыдущий Blob, если он был (utility hygiene в SPA-навигациях)
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-      }
-      const blob = new Blob([JSON.stringify(manifest)], {
-        type: 'application/manifest+json',
-      });
-      const blobUrl = URL.createObjectURL(blob);
-      blobUrlRef.current = blobUrl;
-
-      const link = document.querySelector<HTMLLinkElement>(
-        'link[rel="manifest"]',
-      );
-      if (link) {
-        link.setAttribute('href', blobUrl);
-      } else {
-        const created = document.createElement('link');
-        created.rel = 'manifest';
-        created.href = blobUrl;
-        document.head.appendChild(created);
-      }
+    // ---- 3. PWA-манифест ----------------------------------------------
+    // Сам JSON отдаёт бэк, фронту достаточно обновить href с версией —
+    // чтобы Android/Chrome посчитали URL новым и перечитали манифест.
+    if (branding.manifest_version) {
+      setIconHref('manifest', manifestUrl(branding.manifest_version));
     }
   }, [publicConfig]);
-
-  // Чистим Blob при размонтировании (на практике компонент живёт всю сессию).
-  useEffect(() => {
-    return () => {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, []);
 
   return null;
 }
 
 /**
  * Меняет href у link[rel=<rel>]. Если такого тега нет — создаёт.
- * Параллельно убираем `sizes`, т.к. для произвольной картинки мы их не знаем,
- * а старое значение из index.html может мешать выбору иконки браузером.
+ * Параллельно убираем `sizes`/`type`, т.к. для произвольной картинки мы их
+ * не знаем, а старые значения из index.html могут мешать выбору иконки.
  */
 function setIconHref(rel: string, href: string) {
   const selector = `link[rel="${rel}"]`;
@@ -155,18 +85,6 @@ function setIconHref(rel: string, href: string) {
     node.removeAttribute('type');
     node.removeAttribute('sizes');
   });
-}
-
-/**
- * Manifest icons[*].src должен быть абсолютным URL — относительный
- * Blob-URL не понимает «base» документа, и иконку браузер не найдёт.
- */
-function toAbsoluteUrl(url: string): string {
-  try {
-    return new URL(url, window.location.origin).toString();
-  } catch {
-    return url;
-  }
 }
 
 export default BrandingHead;

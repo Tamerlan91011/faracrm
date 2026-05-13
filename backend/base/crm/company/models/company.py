@@ -1,7 +1,11 @@
+from copy import deepcopy
+from typing import Any
+
 from backend.base.system.dotorm.dotorm.fields import (
     Char,
     Integer,
     Boolean,
+    JSONField,
     Many2one,
     One2many,
     PolymorphicMany2one,
@@ -10,6 +14,48 @@ from backend.base.system.dotorm.dotorm.fields import (
 from backend.base.system.dotorm.dotorm.model import DotModel
 from backend.base.system.core.enviroment import env
 from backend.base.crm.attachments.models.attachments import Attachment
+
+# Единственный источник правды для дефолтного PWA-манифеста.
+# Используется:
+#   1. как default нового поля manifest_json (новые компании
+#      получают его при INSERT через ORM);
+#   2. как fallback в публичной ручке /api/public/manifest.json,
+#      если в БД лежит null или не-dict.
+# Иконки указывают на /icon-192.png и /icon-512.png — они физически
+# лежат в frontend/public/ и отдаются статикой, так что PWA можно
+# поставить даже на пустой инсталляции без загруженных файлов.
+# Если в Company загружены manifest_icon_192_id / manifest_icon_512_id —
+# бэк перекрывает icons[] на их URL (см. _build_manifest в роутере).
+DEFAULT_MANIFEST: dict[str, Any] = {
+    "name": "FARA CRM",
+    "short_name": "FARA",
+    "description": "FARA CRM - Customer Relationship Management",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ffffff",
+    "theme_color": "#228be6",
+    "icons": [
+        {
+            "src": "/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable",
+        },
+        {
+            "src": "/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable",
+        },
+    ],
+}
+
+
+def _default_manifest() -> dict[str, Any]:
+    """deepcopy при каждом INSERT — иначе все компании будут шарить
+    один и тот же словарь и правка одной полезет всем."""
+    return deepcopy(DEFAULT_MANIFEST)
+
 
 # Доступные типы соцсетей для странички логина.
 # Список расширяемый — добавил новый, и сразу появился в Selection.
@@ -60,20 +106,39 @@ class Company(DotModel):
     login_background_id: "Attachment | None" = PolymorphicMany2one(
         relation_table=Attachment,
     )
-    # Кастомный фавикон вкладки браузера и иконка PWA. Если пусто —
-    # используется встроенный /logo-mark.svg / /icon-512.png из public/.
+    # Кастомный фавикон вкладки браузера и apple-touch-icon. Не используется
+    # в PWA-манифесте — для PWA отдельные поля manifest_icon_192_id /
+    # manifest_icon_512_id (Android требует именно квадратные PNG 192/512 px,
+    # а вкладке/iOS подходит и SVG). Если пусто — /logo-mark.svg из public/.
     favicon_id: "Attachment | None" = PolymorphicMany2one(
         relation_table=Attachment,
     )
 
-    # Кастомный <title> приложения и name/short_name в PWA-манифесте.
-    # Если пусто — используется значение из index.html ("F.A.R.A.").
-    app_title: str | None = Char(
-        string="App title",
-        help=(
-            "Заголовок вкладки браузера и имя PWA. "
-            "Если пусто — используется значение из index.html."
+    # Иконки PWA. Подставляются в manifest.json через бэк-ручку
+    # /api/public/manifest.json (дополняют/перекрывают пользовательский JSON,
+    # если в нём не задан icons).
+    manifest_icon_192_id: "Attachment | None" = PolymorphicMany2one(
+        relation_table=Attachment,
+    )
+    manifest_icon_512_id: "Attachment | None" = PolymorphicMany2one(
+        relation_table=Attachment,
+    )
+
+    # PWA-манифест в виде JSONB. Редактируется админом в форме компании,
+    # отдаётся бэком из /api/public/manifest.json с правильным Content-Type
+    # и заголовками против кеширования. Поле name используется ещё и как
+    # <title> вкладки браузера. icons можно опустить — бэк подставит URL
+    # загруженных manifest_icon_192_id / manifest_icon_512_id.
+    # Дефолт берётся из DEFAULT_MANIFEST (тот же объект, что и fallback
+    # на отдаче) — единственный источник правды.
+    manifest_json: dict | None = JSONField(
+        string="PWA manifest (JSON)",
+        description=(
+            "Содержимое манифеста PWA. Поле icons можно опустить — "
+            "бэк подставит URL загруженных manifest_icon_192_id и "
+            "manifest_icon_512_id."
         ),
+        default=_default_manifest,
     )
 
     # Тексты на странице входа

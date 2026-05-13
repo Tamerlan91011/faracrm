@@ -8,7 +8,9 @@ import {
   Box,
   Text,
 } from '@mantine/core';
+import { notifications } from '@mantine/notifications';
 import {
+  IconCopy,
   IconDownload,
   IconRotateClockwise,
   IconRotate,
@@ -63,6 +65,35 @@ export function ImagePreviewModal({
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
+    }
+  };
+
+  // Копирование URL картинки в буфер обмена. Полезно когда URL загруженной
+  // иконки нужно вставить в другое место — например, в icons[].src
+  // PWA-манифеста (см. форму компании, поле manifest_json).
+  // src может быть data:base64 (только что загруженный файл, ещё не
+  // отправленный на бэк) — такой URL копируем как есть, чужому
+  // браузеру он не пригодится, но в JSON-манифест админ его всё равно
+  // не вставит до сохранения.
+  const handleCopyUrl = async () => {
+    if (!src) return;
+    try {
+      // Абсолютный URL: относительный /api/... в буфере мало кому пригодится,
+      // а в манифесте всё равно нужен абсолютный (или однозначно относительный
+      // к origin). Поднимаем относительный к window.location.origin.
+      const absolute = src.startsWith('data:')
+        ? src
+        : new URL(src, window.location.origin).toString();
+      await navigator.clipboard.writeText(absolute);
+      notifications.show({
+        message: 'URL скопирован',
+        color: 'green',
+      });
+    } catch {
+      notifications.show({
+        message: 'Не удалось скопировать URL',
+        color: 'red',
+      });
     }
   };
 
@@ -137,6 +168,16 @@ export function ImagePreviewModal({
               </ActionIcon>
             </Tooltip>
             <Box w={16} />
+            <Tooltip label="Скопировать URL">
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="lg"
+                onClick={handleCopyUrl}
+              >
+                <IconCopy size={20} color="white" />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label="Скачать">
               <ActionIcon
                 variant="subtle"

@@ -9,7 +9,10 @@
     <link rel="icon" href="favicon.ico" sizes="any" />
     <!-- для создание иконки на смартфонах и планшетах. 512 x 512 пикселей -->
     <link rel="apple-touch-icon" href="/icon-512.png" />
-    <link rel="manifest" href="/manifest.json" />
+    <!-- PWA-манифест отдаёт бэк (а не статика), чтобы админ мог менять
+         его в админке без передеплоя. После загрузки JS BrandingHead.tsx
+         клеит сюда ?v=<manifest_version> для cache-bust. -->
+    <link rel="manifest" href="/api/public/manifest.json" />
 
     <meta name="theme-color" content="#228be6" />
     <meta property="og:title" content="F.A.R.A." />

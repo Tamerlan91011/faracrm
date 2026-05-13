@@ -43,31 +43,54 @@ export function ViewFormCompany(props: ViewFormProps) {
           name="branding"
           label="Брендинг"
           icon={<IconPhoto size={16} />}>
-          <FormSection title="Логотипы и фон">
-            <FormRow cols={3}>
+          <FormSection title="Логотипы и иконки">
+            {/* Все картинки UI одной сеткой: 3 логотипа/фон + фавикон.
+                favicon_id — иконка вкладки браузера и apple-touch-icon
+                на iOS. Не используется в PWA — для PWA отдельные иконки
+                ниже (192/512 px). */}
+            <FormRow cols={2}>
               <Field name="logo_id" label="Логотип CRM" />
               <Field name="login_logo_id" label="Логотип входа" />
               <Field name="login_background_id" label="Фон страницы входа" />
+              <Field name="favicon_id" label="Фавикон вкладки/iOS" />
             </FormRow>
           </FormSection>
 
           <FormSection
-            title="Вкладка браузера и PWA"
+            title="PWA-манифест"
             icon={<IconWindowMaximize size={18} />}>
-            {/* favicon_id — иконка во вкладке браузера и в PWA-манифесте.
-                Рекомендуется PNG/SVG, квадратный (например 512×512), прозрачный фон.
-                app_title — заголовок вкладки и name/short_name PWA.
-                Если поля пусты — берётся значение из index.html (F.A.R.A.).
+            {/* manifest_icon_192/512 — иконки PWA. Android требует именно
+                квадратные PNG 192 и 512 px. Загруженные URL можно скопировать
+                через превью (кнопка «Скопировать URL») и подставить в icons[]
+                манифеста ниже — или оставить пустыми, тогда бэк подставит
+                URL'ы автоматически.
+
+                manifest_json — текст PWA-манифеста (имя, цвета, display и т.д.).
+                Если пусто или невалидный JSON — бэк отдаёт дефолтный.
+                Имя из поля name становится <title> вкладки браузера.
 
                 ⚠️ Уже установленные PWA не обновят иконку/имя автоматически —
-                ОС кеширует их при установке. Меняется только то, что видно
-                в открытой вкладке браузера и при свежей установке PWA. */}
+                ОС кеширует их при установке. Юзеру нужно переустановить ярлык. */}
             <FormRow cols={2}>
-              <Field name="favicon_id" label="Фавикон (иконка вкладки/PWA)" />
               <Field
-                name="app_title"
-                label="Название во вкладке/PWA"
-                placeholder="F.A.R.A."
+                name="manifest_icon_192_id"
+                label="Иконка PWA 192×192 (PNG)"
+              />
+              <Field
+                name="manifest_icon_512_id"
+                label="Иконка PWA 512×512 (PNG)"
+              />
+            </FormRow>
+            <FormRow cols={1}>
+              {/* manifest_json — поле типа JSONB на бэке, фронт автоматически
+                  подбирает FieldJson (mantine JsonInput с подсветкой и
+                  валидацией). Дефолтный объект подставляется на бэке через
+                  default=DEFAULT_MANIFEST — placeholder не нужен. */}
+              <Field
+                name="manifest_json"
+                label="Манифест PWA (JSON)"
+                minRows={10}
+                formatOnBlur
               />
             </FormRow>
           </FormSection>
@@ -92,10 +115,7 @@ export function ViewFormCompany(props: ViewFormProps) {
                 label="Цвет кнопки входа"
                 placeholder="#009982"
               />
-              <Field
-                name="login_card_style"
-                label="Стиль карточки логина"
-              />
+              <Field name="login_card_style" label="Стиль карточки логина" />
             </FormRow>
           </FormSection>
 
