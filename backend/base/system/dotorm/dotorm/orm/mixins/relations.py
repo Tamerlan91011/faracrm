@@ -8,7 +8,6 @@ from ...access import Operation
 from ...fields import (
     PolymorphicMany2one,
     PolymorphicOne2many,
-    Field,
     Many2many,
     Many2one,
     One2many,
@@ -263,7 +262,7 @@ class OrmRelationsMixin(_Base):
                 and relation_table
             ):
                 m2o_id = getattr(record, name)
-                if m2o_id is None or isinstance(m2o_id, Field):
+                if m2o_id is None:
                     setattr(record, name, None)
                     continue
                 execute_list.append(

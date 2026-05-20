@@ -1,7 +1,7 @@
 """ORM field definitions."""
 
 import datetime
-from decimal import Decimal as PythonDecimal
+from decimal import Decimal as PythonDecimal, InvalidOperation
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Type, Literal
@@ -133,6 +133,36 @@ class Field[FieldType]:
     # обман тайп чекера.
     def __new__(cls, *args: Any, **kwargs: Any) -> FieldType:
         return super().__new__(cls)
+
+    # Имя поля в классе-владельце. Заполняется Python автоматически через
+    # __set_name__ при создании класса (для каждого class-attr вида Field).
+    # Используется __get__ для lookup в instance.__dict__.
+    name: str = ""
+
+    def __set_name__(self, owner, name: str) -> None:
+        self.name = name
+
+    def __get__(self, instance, owner):
+        """Non-data descriptor: значение поля или None.
+
+        Class-level access (Cls.foo) → возвращаем сам Field-инстанс
+            (используется декораторами @depends, тайп-чекерами, и сборкой
+            кэшей по cls.__dict__).
+        Instance-level access (rec.foo) → возвращаем instance.__dict__[name]
+            если ключ есть (включая случай explicit None), иначе None.
+
+        Отсутствие __set__ делает дескриптор non-data: rec.foo = x
+        записывает в instance.__dict__['foo'] обычным путём. Это и есть
+        источник правды «было ли явно назначено»: name in rec.__dict__.
+
+        Контракт для бизнес-кода:
+          rec.tax_id        → значение (int / Tax / None / ...)
+          rec.is_assigned("tax_id") → было ли явно назначено
+                                       (включая explicit None).
+        """
+        if instance is None:
+            return self
+        return instance.__dict__.get(self.name)
 
     def to_sql_update(self, field_name: str, value: Any) -> tuple[str, Any]:
         """Возвращает (SQL-fragment для SET-клаузы, bind-value).
@@ -401,7 +431,7 @@ class Boolean(Field[bool]):
     sql_type = "BOOL"
 
 
-class Decimal(Field[PythonDecimal]):
+class Decimal(Field[float]):
     """Accurate decimal field."""
 
     def __init__(
@@ -421,6 +451,23 @@ class Decimal(Field[PythonDecimal]):
     @property
     def sql_type(self) -> str:
         return f"DECIMAL({self.max_digits},{self.decimal_places})"
+
+    @staticmethod
+    def to_decimal(value: Any) -> PythonDecimal:
+        """Безопасное приведение к Decimal для арифметики.
+
+        Незаданное поле модели резолвится в дескриптор Field — это и
+        значит "значение не задано"; None / Field / bool / мусор → 0.
+        Доступно доменному коду как ``Decimal.to_decimal(x)``.
+        """
+        if value is None or isinstance(value, (Field, bool)):
+            return PythonDecimal(0)
+        if isinstance(value, PythonDecimal):
+            return value
+        try:
+            return PythonDecimal(str(value))
+        except (InvalidOperation, ValueError, TypeError):
+            return PythonDecimal(0)
 
 
 class Datetime(Field[datetime.datetime]):

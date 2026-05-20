@@ -34,6 +34,9 @@ export const FieldComponents: Record<
   FieldText,
   FieldBoolean,
   FieldFloat,
+  // Decimal (деньги, аналог Monetary) рендерится как Float:
+  // NumberInput с decimalScale=2. Бэкенд отдаёт type="Decimal".
+  FieldDecimal: FieldFloat,
   FieldDatetime,
   FieldDate,
   FieldTime,

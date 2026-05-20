@@ -10,9 +10,11 @@ import type {
 import {
   FormSection,
   FormRow,
+  FormCol,
   FormTabs,
   FormTab,
 } from '@/components/Form/Layout';
+import { SalesTotalsSummary } from './TotalsSummary';
 import {
   IconShoppingCart,
   IconList,
@@ -49,7 +51,7 @@ export function ViewFormSales(props: ViewFormProps) {
           <Field name="stage_id" label="Стадия" />
         </FormRow>
         <FormRow cols={2}>
-          <Field name="partner_id" label="Клиент" />
+          <Field name="partner_id" label="Клиент" quickCreate />
           <FieldContacts
             name="contact_ids"
             label="Контакты"
@@ -69,34 +71,55 @@ export function ViewFormSales(props: ViewFormProps) {
           name="lines"
           label="Позиции заказа"
           icon={<IconList size={16} />}>
-          <Field
-            name="order_line_ids"
-            label=""
-            displayField="product_id"
-            showCreate={true}
-            showSelect={false}
-            customForm={ViewFormSaleLinesPopup}
-            inline_create={false}
-            inline_update={false}>
-            <Field name="id" label={t('sales.id')} />
-            <Field name="product_id" label={t('sale_line.product_id')} />
-            <Field
-              name="product_uom_qty"
-              label={t('sale_line.product_uom_qty')}
-            />
-            <Field
-              name="product_uom_id"
-              label={t('sale_line.product_uom_id')}
-            />
-            <Field name="price_unit" label={t('sale_line.price_unit')} />
-            <Field name="discount" label={t('sale_line.discount')} />
-            <Field name="tax_id" label={t('sale_line.tax_id')} />
-            <Field
-              name="price_subtotal"
-              label={t('sale_line.price_subtotal')}
-            />
-            <Field name="price_total" label={t('sale_line.price_total')} />
-          </Field>
+          {/* Таблица позиций (~75%) слева, блок итогов (~25%) справа.
+              FormRow=SimpleGrid(4 кол.), FormCol span 3 / span 1. */}
+          <FormRow cols={4}>
+            <FormCol span={3}>
+              <Field
+                name="order_line_ids"
+                label=""
+                displayField="product_id"
+                showCreate={true}
+                showSelect={false}
+                customForm={ViewFormSaleLinesPopup}
+                inline_create={false}
+                inline_update={true}
+                quickCreateFields={['product_id']}>
+                <Field name="id" label={t('sales.id')} />
+                <Field name="product_id" label={t('sale_line.product_id')} quickCreate />
+                <Field
+                  name="product_uom_qty"
+                  label={t('sale_line.product_uom_qty')}
+                />
+                <Field
+                  name="product_uom_id"
+                  label={t('sale_line.product_uom_id')}
+                />
+                <Field name="price_unit" label={t('sale_line.price_unit')} />
+                <Field name="discount" label={t('sale_line.discount')} />
+                <Field name="tax_id" label={t('sale_line.tax_id')} />
+                <Field
+                  name="price_subtotal"
+                  label={t('sale_line.price_subtotal')}
+                />
+                <Field
+                  name="price_total"
+                  label={t('sale_line.price_total')}
+                />
+              </Field>
+            </FormCol>
+            <FormCol span={1}>
+              {/* children — только для выборки полей с сервера,
+                  SalesTotalsSummary их не рендерит (см. utils.tsx). */}
+              <SalesTotalsSummary>
+                <Field name="amount_undiscounted" />
+                <Field name="amount_untaxed" />
+                <Field name="amount_tax" />
+                <Field name="amount_total" />
+                <Field name="amount_paid" />
+              </SalesTotalsSummary>
+            </FormCol>
+          </FormRow>
         </FormTab>
 
         <FormTab
@@ -133,7 +156,7 @@ export function ViewFormSaleLinesPopup(props: ViewFormProps) {
         title={t('sale_line.product_id')}
         icon={<IconPackage size={18} />}>
         <FormRow cols={1}>
-          <Field name="product_id" label={t('sale_line.product_id')} />
+          <Field name="product_id" label={t('sale_line.product_id')} quickCreate />
         </FormRow>
         <FormRow cols={2}>
           <Field
@@ -185,7 +208,7 @@ export function ViewFormSaleLines(props: ViewFormProps) {
           <Field name="sequence" label={t('sale_line.sequence')} />
         </FormRow>
         <FormRow cols={2}>
-          <Field name="product_id" label={t('sale_line.product_id')} />
+          <Field name="product_id" label={t('sale_line.product_id')} quickCreate />
           <Field name="product_uom_id" label={t('sale_line.product_uom_id')} />
         </FormRow>
       </FormSection>
@@ -222,6 +245,7 @@ export function ViewFormTax(props: ViewFormProps) {
         <FormRow cols={2}>
           <Field name="id" label="ID" />
           <Field name="name" label="Название" />
+          <Field name="amount" label="Ставка" />
         </FormRow>
       </FormSection>
     </Form>

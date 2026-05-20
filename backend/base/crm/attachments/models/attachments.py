@@ -12,7 +12,6 @@ from backend.base.system.dotorm.dotorm.decorators import hybridmethod
 from backend.base.system.dotorm.dotorm.fields import (
     Binary,
     Char,
-    Field,
     Integer,
     Boolean,
     Many2one,
@@ -55,11 +54,10 @@ class Attachment(AuditMixin, DotModel):
     def json_list(self):
         """Добавляет checksum в LIST сериализацию для cache busting."""
         result = super().json_list()
-        checksum = getattr(self, "checksum", None)
-        if checksum and not isinstance(checksum, Field):
-            result["checksum"] = checksum
-        else:
-            result["checksum"] = None
+        # Под non-data descriptor self.checksum возвращает либо реальное
+        # значение, либо None (если не назначено). Поэтому просто truthy.
+        checksum = self.checksum
+        result["checksum"] = checksum if checksum else None
         return result
 
     id: int = Integer(primary_key=True)
@@ -305,12 +303,6 @@ class Attachment(AuditMixin, DotModel):
             if not payload.size:
                 payload.size = len(payload.content)
             payload.checksum = hashlib.sha1(payload.content).hexdigest()
-
-            # TODO: убрать когда при инициализации будем заполнять None
-            if isinstance(payload.res_model, Field):
-                payload.res_model = None
-            if isinstance(payload.res_id, Field):
-                payload.res_id = None
 
             route, storage, parent_folder_id, parent_folder_name = (
                 await self._resolve_route_and_folder(

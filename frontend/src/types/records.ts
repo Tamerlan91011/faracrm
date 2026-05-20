@@ -72,6 +72,13 @@ export interface SaleRecord extends BaseRecord {
   notes: string | null;
   date_order: string | null;
   origin: string | null;
+  // Денежные итоги (вычисляются бэкендом через @depends)
+  amount_undiscounted: number;
+  amount_untaxed: number;
+  amount_tax: number;
+  amount_total: number;
+  // Аванс / предоплата — ручной ввод
+  amount_paid: number;
 }
 
 export interface SaleLineRecord extends BaseRecord {

@@ -9,9 +9,11 @@ if TYPE_CHECKING:
     from .sale_line import SaleLine
     from .sale_stage import SaleStage
 
+from backend.base.system.dotorm.dotorm.decorators import depends
 from backend.base.system.dotorm.dotorm.fields import (
     Char,
     Datetime,
+    Decimal,
     Integer,
     Boolean,
     Many2one,
@@ -83,3 +85,69 @@ class Sale(AuditMixin, DotModel):
         default=lambda: datetime.datetime.now(datetime.timezone.utc),
     )
     origin: str | None = Char(string="Source Document")
+
+    amount_untaxed: float = Decimal(
+        16,
+        2,
+        string="Untaxed Amount",
+        default=0,
+        compute="_compute_amounts",
+    )
+    amount_tax: float = Decimal(
+        16,
+        2,
+        string="Taxes",
+        default=0,
+        compute="_compute_amounts",
+    )
+    amount_total: float = Decimal(
+        16,
+        2,
+        string="Total",
+        default=0,
+        compute="_compute_amounts",
+    )
+    amount_undiscounted: float = Decimal(
+        16,
+        2,
+        string="Amount Before Discount",
+        default=0,
+        compute="_compute_amounts",
+    )
+    # Аванс / предоплата — ручной ввод. НЕ вычисляется (нет compute,
+    # не в @depends) → движок пересчёта его не перезаписывает.
+    amount_paid: float = Decimal(
+        16,
+        2,
+        string="Paid / Advance",
+        default=0,
+    )
+
+    @depends(
+        "order_line_ids.price_subtotal",
+        "order_line_ids.price_tax",
+        "order_line_ids.price_undiscounted",
+    )
+    async def _compute_amounts(self) -> None:
+        """Сумма по строкам заказа: untaxed / tax / total / undiscounted.
+
+        Pure compute: self.order_line_ids уже подгружен движком через
+        _ensure_prefetch_for_method (на основании dotted @depends).
+        Никаких SELECT'ов внутри. Округление до знаков валюты делает
+        само поле Decimal при записи."""
+        lines = (
+            self.order_line_ids
+            if isinstance(self.order_line_ids, list)
+            else []
+        )
+        untaxed = Decimal.to_decimal(0)
+        tax = Decimal.to_decimal(0)
+        undiscounted = Decimal.to_decimal(0)
+        for line in lines:
+            untaxed += Decimal.to_decimal(line.price_subtotal)
+            tax += Decimal.to_decimal(line.price_tax)
+            undiscounted += Decimal.to_decimal(line.price_undiscounted)
+        self.amount_untaxed = untaxed
+        self.amount_tax = tax
+        self.amount_total = untaxed + tax
+        self.amount_undiscounted = undiscounted

@@ -176,6 +176,10 @@ class DotModel(
         # Build field cache eagerly — runs once per class definition.
         # Each subclass (Lead, Activity, etc.) sees full MRO including mixins.
         cls._build_field_cache()
+        # @depends compute cache. Должен идти ПОСЛЕ _build_field_cache,
+        # потому что использует _cache_all_fields для определения, какие
+        # поля пишет каждый compute-метод (через field.compute=...).
+        cls._build_compute_cache()
 
     @classmethod
     def _build_field_cache(cls):
@@ -211,6 +215,141 @@ class DotModel(
         cls._cache_compute_fields = compute_fields
         cls._cache_has_json_fields = bool(json_fields)
         cls._cache_has_compute_fields = bool(compute_fields)
+
+    @classmethod
+    def _build_compute_cache(cls):
+        """Собрать @depends-методы для движка _fire_depends + recompute().
+
+        Заполняет per-class:
+        - _cache_compute_method_deps: {method → tuple(deps)} —
+          вход для OrmPrimaryMixin._build_depends_tables (строит
+          _depends_local_triggers / _depends_parent_triggers).
+        - _cache_compute_writes: {method → set(written_fields)} —
+          OrmPrimaryMixin._run_compute персистит эти поля и каскадирует.
+        - _cache_compute_by_dep: {dep_local_segment → set(methods)} —
+          вход для recompute() (in-memory путь, см. execute_onchange).
+        - _cache_compute_order: list[method_name] — порядок объявления,
+          без топосорта. Каскад через _fire_depends на written-полях
+          сам подтягивает downstream-методы — отдельная сортировка не
+          нужна.
+        - _cache_has_compute_methods: bool.
+
+        Вызывается один раз из __init_subclass__ после _build_field_cache.
+        """
+
+        # Резолвер: превращает любой допустимый формат dep в строку имени.
+        # Поддерживает:
+        #   "price_unit"            → "price_unit"
+        #   "tax_id.amount"         → "tax_id.amount"
+        #   tax_id (Field-инстанс)  → "tax_id"  (из field.name, заданного __set_name__)
+        #   (tax_id, "amount")      → "tax_id.amount"
+        # Field-инстансы в class-attr scope @depends — это сам объект
+        # (Field.__get__ возвращает self при class-level access). Их name
+        # уже проставлен Python через __set_name__ при создании класса.
+        def _resolve_dep(d) -> str | None:
+            if isinstance(d, str):
+                return d
+            if isinstance(d, Field):
+                return d.name or None
+            if isinstance(d, tuple) and len(d) == 2:
+                head, tail = d
+                head_name = head.name if isinstance(head, Field) else head
+                if isinstance(head_name, str) and isinstance(tail, str):
+                    return f"{head_name}.{tail}"
+            return None
+
+        # имя_метода → кортеж зависимостей (всё уже как строки имён)
+        method_deps: dict[str, tuple[str, ...]] = {}
+        for klass in reversed(cls.__mro__):
+            if klass is object:
+                continue
+            for attr_name, attr in klass.__dict__.items():
+                func = getattr(attr, "__func__", attr)
+                if callable(func) and getattr(func, "_is_compute", False):
+                    raw_deps = getattr(func, "_compute_deps", ())
+                    resolved = tuple(
+                        d for d in (_resolve_dep(x) for x in raw_deps) if d
+                    )
+                    method_deps[attr_name] = resolved
+
+        # имя_метода → множество полей, которые он пишет
+        # (определяется по объявлению compute="..." / compute=callable
+        # в самих полях; собирается из _cache_all_fields).
+        method_writes: dict[str, set[str]] = {m: set() for m in method_deps}
+        for fname, field in cls._cache_all_fields.items():
+            comp = field.compute
+            if isinstance(comp, str):
+                target = comp
+            elif callable(comp):
+                target = getattr(comp, "__name__", None)
+            else:
+                target = None
+            if target in method_writes:
+                method_writes[target].add(fname)
+
+        # dep-поле (локальный первый сегмент пути) → методы.
+        # Нужно recompute() для onchange: по триггерному полю формы
+        # выбираются методы, чьи depends его упоминают.
+        by_dep: dict[str, set[str]] = {}
+        for m, deps in method_deps.items():
+            for d in deps:
+                local = d.split(".", 1)[0]
+                by_dep.setdefault(local, set()).add(m)
+
+        cls._cache_compute_method_deps = method_deps
+        cls._cache_compute_writes = method_writes
+        cls._cache_compute_by_dep = by_dep
+        cls._cache_compute_order = list(method_deps.keys())
+        cls._cache_has_compute_methods = bool(method_deps)
+
+    async def recompute(
+        self, changed: set[str] | None = None, session=None
+    ) -> set[str]:
+        """In-memory пересчёт stored computed-полей @depends на self.
+
+        Используется ИСКЛЮЧИТЕЛЬНО из execute_onchange — там нужно
+        пересчитать поля для возврата на форму, не записывая в БД.
+        В CRUD-пути работает _fire_depends (он же персистит результат
+        и поднимает родителей через _depends_parent_triggers).
+
+        Args:
+            changed: если задано — запускаются только методы, чьи
+                зависимости пересекаются с этими полями (по локальному
+                первому сегменту пути). None — все методы.
+
+        Returns:
+            Множество имён полей, перезаписанных пересчётом.
+        """
+        cls = self.__class__
+        if not cls._cache_has_compute_methods:
+            return set()
+
+        order = cls._cache_compute_order
+        if changed is None:
+            methods = list(order)
+        else:
+            triggered: set[str] = set()
+            for f in changed:
+                triggered |= cls._cache_compute_by_dep.get(f, set())
+            if not triggered:
+                return set()
+            methods = [m for m in order if m in triggered]
+
+        written: set[str] = set()
+        for mname in methods:
+            handler = getattr(self, mname, None)
+            if handler is None:
+                continue
+            # Догружаем relation-поля, объявленные в dotted @depends
+            # этого метода — тот же контракт, что в _run_compute из
+            # CRUD-пути. Compute читает self.tax_id.amount и
+            # self.order_line_ids[i].price_subtotal без fetch'ей внутри.
+            await self._ensure_prefetch_for_method(mname, session)
+            result = handler()
+            if asyncio.iscoroutine(result):
+                await result
+            written |= cls._cache_compute_writes.get(mname, set())
+        return written
 
     def __init__(self, **kwargs: Any) -> None:
         # Fast path: bulk-assign all kwargs via __dict__
@@ -469,6 +608,54 @@ class DotModel(
         Результат в виде dict"""
         return cls._cache_store_fields_dict
 
+    def is_assigned(self, name: str) -> bool:
+        """True если поле было явно присвоено на этом инстансе.
+
+        Источник правды — `instance.__dict__`: Python пишет туда при
+        обычном setattr (Field — non-data descriptor, без __set__).
+
+        Случаи:
+          rec.tax_id = 5      → is_assigned("tax_id") = True
+          rec.tax_id = None   → is_assigned("tax_id") = True (явный None)
+          никогда не задавали → is_assigned("tax_id") = False
+
+        Используется в местах, где нужно отличать «явно None» от
+        «не загружено» (apply_defaults, json exclude_unset, и т.п.).
+        Когда такого различия не нужно — просто читай `rec.tax_id`,
+        он сам вернёт None при не-назначенном поле через Field.__get__.
+        """
+        return name in self.__dict__
+
+    def assigned_fields(
+        self,
+        exclude: tuple[str, ...] = ("id",),
+        exclude_none: bool = False,
+    ) -> list[str]:
+        """Список имён полей, которые явно присвоены на этом инстансе.
+
+        Используется для:
+          - автоопределения `fields=` в update без явного списка;
+          - построения списка изменённых полей для `_fire_depends`
+            в delete / delete_bulk / create / create_bulk.
+
+        Args:
+            exclude: не включать поля с этими именами (по умолчанию "id").
+            exclude_none: если True, поля со значением `None` тоже
+                пропустить. По умолчанию False: `payload.tax_id = None`
+                — это валидное явное значение «обнулить FK», и compute,
+                подписанный на tax_id, должен это увидеть.
+        """
+        result: list[str] = []
+        for name in self._cache_all_fields:
+            if name in exclude:
+                continue
+            if name not in self.__dict__:
+                continue
+            if exclude_none and self.__dict__[name] is None:
+                continue
+            result.append(name)
+        return result
+
     @classmethod
     async def get_default_values(
         cls, fields_client_nested: dict[str, list[str]]
@@ -694,23 +881,22 @@ class DotModel(
             if exclude and field_name in exclude:
                 continue
 
-            # field - это поле из экземпляра.
-            # 1. оно может содержать данные, если задано.
-            # 2. оно может содержать класс Field, если не задано.
-            field = getattr(self, field_name)
-
             # НЕ ЗАДАНО
-            # Поле осталось дескриптором Field — не было считано из БД.
+            # Поле не присвоено на этом инстансе (отсутствует в __dict__).
             # Сериализация не вычисляет default (это задача create).
             # exclude_unset=True → пропускаем (как Pydantic).
             # exclude_unset=False → ставим None чтобы ключ был в dict.
-            if isinstance(field, Field):
+            if not self.is_assigned(field_name):
                 if not exclude_unset:
                     fields_json[field_name] = None
+                continue
+
+            # ЗАДАНО — значение либо реальное, либо явный None.
+            field = getattr(self, field_name)
 
             # ЗАДАНО как many2one
             # если поле является моделью то это many2one
-            elif isinstance(field, DotModel):
+            if isinstance(field, DotModel):
                 if mode == JsonMode.LIST:
                     # обрубаем, исключаем все релейшен поля
                     fields_json[field_name] = field.json_list()

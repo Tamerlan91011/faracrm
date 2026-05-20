@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 from backend.base.system.dotorm.dotorm.fields import (
     Boolean,
     Char,
-    Field,
     Integer,
     JSONField,
     Many2one,
@@ -164,9 +163,8 @@ class AttachmentRoute(DotModel):
         if record:
             # Add all record attributes
             for field_name in record.get_all_fields().keys():
-                value = getattr(record, field_name)
-                if not isinstance(value, Field):
-                    context[field_name] = value
+                if record.is_assigned(field_name):
+                    context[field_name] = getattr(record, field_name)
 
         # Handle zfill function calls in template
         # Convert {zfill(id)} to actual zfill call

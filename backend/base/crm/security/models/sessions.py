@@ -8,7 +8,6 @@ from backend.base.system.dotorm.dotorm.fields import (
     Boolean,
     Char,
     Datetime,
-    Field,
     Integer,
     Many2one,
 )
@@ -101,11 +100,7 @@ class Session(DotModel):
 
     def get_lang(self) -> str:
         """Контракт DotORM: код текущего языка."""
-        if (
-            self.user_id
-            and self.user_id.lang_id
-            and not isinstance(self.user_id.lang_id, Field)
-        ):
+        if self.user_id and self.user_id.lang_id:
             return self.user_id.lang_id.code or "en"
         return "en"
 

@@ -6,8 +6,9 @@ if TYPE_CHECKING:
     from backend.base.crm.products.models.uom import Uom
     from backend.base.crm.products.models.product import Product
 
-from backend.base.system.dotorm.dotorm.decorators import onchange
+from backend.base.system.dotorm.dotorm.decorators import onchange, depends
 from backend.base.system.dotorm.dotorm.fields import (
+    Decimal,
     Float,
     Integer,
     Many2one,
@@ -33,44 +34,86 @@ class SaleLine(AuditMixin, DotModel):
 
     product_uom_qty: float = Float(
         string="Quantity",
-        # compute="_compute_product_uom_qty",
         default=1.0,
     )
     product_uom_id: "Uom" = Many2one(
         lambda: env.models.uom,
-        # compute="_compute_product_uom",
         string="Unit of Measure",
     )
     tax_id: "Tax | None" = Many2one(
         lambda: env.models.tax,
-        # compute="_compute_tax_id",
         string="Taxes",
     )
-    price_unit: float = Float(
+    # Цена за единицу — деньги → Decimal.
+    price_unit: float = Decimal(
+        16,
+        2,
         string="Unit Price",
-        default=0.0,
-        # compute="_compute_price_unit",
+        default=0,
     )
+    # Скидка — это процент (%), не деньги → остаётся Float.
     discount: float = Float(
         string="Discount (%)",
         default=0.0,
-        # compute="_compute_discount",
     )
-    price_subtotal: float = Float(
+    # Вычисляемые денежные поля. compute связывает их с _compute_amount;
+    # пересчёт идёт через движок @depends (write/create_bulk/onchange).
+    # Округление до 2 знаков делает само поле Decimal при записи.
+    price_subtotal: float = Decimal(
+        16,
+        2,
         string="Subtotal",
-        default=0.0,
-        # compute="_compute_amount",
+        default=0,
+        compute="_compute_amount",
     )
-    price_tax: float = Float(
+    price_tax: float = Decimal(
+        16,
+        2,
         string="Total Tax",
-        default=0.0,
-        # compute="_compute_amount",
+        default=0,
+        compute="_compute_amount",
     )
-    price_total: float = Float(
+    price_total: float = Decimal(
+        16,
+        2,
         string="Total",
-        default=0.0,
-        # compute="_compute_amount"
+        default=0,
+        compute="_compute_amount",
     )
+    price_undiscounted: float = Decimal(
+        16,
+        2,
+        string="Subtotal Without Discount",
+        default=0,
+        compute="_compute_amount",
+    )
+
+    @depends(
+        price_unit,
+        product_uom_qty,
+        discount,
+        tax_id,
+        "tax_id.amount",  # либо (tax_id, "amount") — head через ссылку
+    )
+    async def _compute_amount(self) -> None:
+        """Subtotal / tax / total / undiscounted по строке."""
+        qty = Decimal.to_decimal(self.product_uom_qty)
+        price = Decimal.to_decimal(self.price_unit)
+        disc = Decimal.to_decimal(self.discount)
+        gross = price * qty
+
+        subtotal = (
+            Decimal.to_decimal(0) if disc == 100 else gross * (1 - disc / 100)
+        )
+        tax_pct = Decimal.to_decimal(self.tax_id and self.tax_id.amount)
+        tax_amount = subtotal * tax_pct / 100
+
+        self.price_subtotal = subtotal
+        self.price_tax = tax_amount
+        self.price_total = subtotal + tax_amount
+        self.price_undiscounted = (
+            gross if disc == 100 else subtotal * 100 / (100 - disc)
+        )
 
     @onchange("product_id")
     async def onchange_product_id(self) -> dict:

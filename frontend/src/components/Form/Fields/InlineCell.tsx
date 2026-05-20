@@ -20,9 +20,12 @@ import {
   useCombobox,
   Loader,
 } from '@mantine/core';
-import { IconChevronDown } from '@tabler/icons-react';
-import { useSearchQuery } from '@/services/api/crudApi';
+import { IconChevronDown, IconPlus } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
+import { useSearchQuery, useCreateMutation } from '@/services/api/crudApi';
 import { FaraRecord, GetListParams, GetListResult } from '@/services/api/crudTypes';
+
+const QUICK_CREATE_VALUE = '__quick_create__';
 import {
   BaseQueryFn,
   TypedUseQueryHookResult,
@@ -43,6 +46,8 @@ interface InlineCellProps {
   onChange: (newValue: any) => void;
   /** Режим только чтение */
   readOnly?: boolean;
+  /** Быстрое создание связанной записи по имени (для Many2one). */
+  quickCreate?: boolean;
 }
 
 export function InlineCell({
@@ -53,6 +58,7 @@ export function InlineCell({
   relation,
   onChange,
   readOnly = false,
+  quickCreate = false,
 }: InlineCellProps) {
   // Не редактируемые поля — id, relation lists
   if (
@@ -120,6 +126,7 @@ export function InlineCell({
           value={value}
           relation={relation || ''}
           onChange={onChange}
+          quickCreate={quickCreate}
         />
       );
 
@@ -148,13 +155,16 @@ function InlineCellM2O({
   value,
   relation,
   onChange,
+  quickCreate = false,
 }: {
   value: any;
   relation: string;
   onChange: (newValue: any) => void;
+  quickCreate?: boolean;
 }) {
   const [search, setSearch] = useState('');
   const [opened, setOpened] = useState(false);
+  const [createRecord] = useCreateMutation();
 
   const combobox = useCombobox({
     onDropdownClose: () => {
@@ -196,13 +206,38 @@ function InlineCellM2O({
     ));
   }, [data]);
 
+  // Пункт "Создать «...»" — если включён quickCreate, есть текст
+  // и нет точного совпадения по name.
+  const trimmedSearch = search.trim();
+  const hasExactMatch = !!data?.data.some(
+    r => String(r.name ?? '').toLowerCase() === trimmedSearch.toLowerCase(),
+  );
+  const showQuickCreate =
+    quickCreate && !!relation && !!trimmedSearch && !hasExactMatch;
+
   return (
     <Combobox
       store={combobox}
       withinPortal
       position="bottom-start"
       shadow="sm"
-      onOptionSubmit={val => {
+      onOptionSubmit={async val => {
+        if (val === QUICK_CREATE_VALUE) {
+          try {
+            const created = await createRecord({
+              model: relation,
+              values: { name: trimmedSearch },
+            }).unwrap();
+            onChange({ id: created.id, name: trimmedSearch });
+          } catch {
+            notifications.show({
+              color: 'red',
+              message: 'Не удалось создать запись',
+            });
+          }
+          combobox.closeDropdown();
+          return;
+        }
         if (data) {
           const record = data.data.find(r => r.id.toString() === val);
           if (record) {
@@ -254,8 +289,24 @@ function InlineCellM2O({
             <Combobox.Empty>Загрузка...</Combobox.Empty>
           ) : options.length > 0 ? (
             options
-          ) : (
+          ) : !showQuickCreate ? (
             <Combobox.Empty>Не найдено</Combobox.Empty>
+          ) : null}
+          {showQuickCreate && (
+            <Combobox.Option
+              value={QUICK_CREATE_VALUE}
+              key={QUICK_CREATE_VALUE}>
+              <span
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  color: 'var(--mantine-color-blue-6)',
+                }}>
+                <IconPlus size={12} />
+                Создать «{trimmedSearch}»
+              </span>
+            </Combobox.Option>
           )}
         </Combobox.Options>
       </Combobox.Dropdown>

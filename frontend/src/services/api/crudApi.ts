@@ -197,39 +197,60 @@ export const crudApi = createApi({
         { model, id, values, invalidateTags },
         lifecycleApi,
       ) {
-        // We also have another copy of the same data in the `read` cache
-        // entry for this record ID, so we need to update that as well
+        // Optimistic patch read-кеша только по СКАЛЯРНЫМ полям. O2M/M2M
+        // приходят сюда как command-dict {created/updated/deleted/...} —
+        // это формат payload'а на запись, а не "состояние записи". Если
+        // запихнуть его в кеш напрямую, форма прочитает order_line_ids
+        // как command-dict и собьёт рендер O2M-таблицы.
+        const isCommandDict = (v: unknown): boolean =>
+          !!v &&
+          typeof v === 'object' &&
+          !Array.isArray(v) &&
+          ('created' in (v as any) ||
+            'updated' in (v as any) ||
+            'deleted' in (v as any) ||
+            'unselected' in (v as any) ||
+            'selected' in (v as any));
+
+        const scalarValues = Object.fromEntries(
+          Object.entries(values).filter(([, v]) => !isCommandDict(v)),
+        );
         const readPatchResult = lifecycleApi.dispatch(
           crudApi.util.updateQueryData(
             'read',
             { model, id, fields: Object.keys(values) },
-            draft => Object.assign(draft, values),
+            draft => Object.assign(draft, scalarValues),
           ),
         );
 
-        // при возврате в список сделать запрос
-        // так как данные обновили только в форме
+        // Список можно инвалидировать рано — он перечитается только при
+        // переходе обратно в табличный вид, и оптимистичный patch формы
+        // туда не утекает.
         lifecycleApi.dispatch(
           crudApi.util.invalidateTags([{ type: model, id: 'LIST' }]),
         );
 
-        // нужно ли делать запрос в любом случае?
-        // минусы: 1 лишний запрос 1 лишний ререндер
-        // плюсы: более свежии подтвержденные данные
-        lifecycleApi.dispatch(
-          crudApi.util.invalidateTags([{ type: model, id: id }]),
-        );
-        // Инвалидируем M2M/O2M кеши для затронутых полей
-        if (invalidateTags?.length) {
-          const m2mTags = invalidateTags.map(fieldName => ({
-            type: model,
-            id: `M2M_${id}_${fieldName}`,
-          }));
-          lifecycleApi.dispatch(crudApi.util.invalidateTags(m2mTags));
-        }
-
         try {
           await lifecycleApi.queryFulfilled;
+
+          // ВАЖНО: refetch текущей записи только ПОСЛЕ того, как PUT
+          // отработал на сервере. Раньше эта инвалидация стояла до
+          // await — GET успевал стартануть, пока PUT ещё летел, забирал
+          // из БД старые computed-поля строк (price_subtotal и др.),
+          // и финальный PUT уже не триггерил повторного refetch'а.
+          // Итог: O2M-строки висели stale до полного F5.
+          lifecycleApi.dispatch(
+            crudApi.util.invalidateTags([{ type: model, id: id }]),
+          );
+
+          // Инвалидируем M2M/O2M кеши для затронутых полей
+          if (invalidateTags?.length) {
+            const m2mTags = invalidateTags.map(fieldName => ({
+              type: model,
+              id: `M2M_${id}_${fieldName}`,
+            }));
+            lifecycleApi.dispatch(crudApi.util.invalidateTags(m2mTags));
+          }
         } catch {
           readPatchResult.undo();
         }

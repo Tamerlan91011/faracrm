@@ -11,7 +11,6 @@ from backend.base.system.dotorm.dotorm.fields import (
     Datetime,
     Selection,
     Many2one,
-    Field,
 )
 from backend.base.system.dotorm.dotorm.model import DotModel
 from backend.base.system.dotorm.dotorm.decorators import hybridmethod
@@ -174,9 +173,8 @@ class Activity(AuditMixin, DotModel):
         SQL UPDATE — без второго round-trip к БД и без промежуточного
         состояния "done + active=true".
         """
-        new_state = payload.state or None
-        # Игнорируем дескриптор Field (поле не задано в payload)
-        if not isinstance(new_state, Field) and new_state == "done":
+
+        if payload.state == "done":
             payload.active = False
             payload.done = True
             payload.done_datetime = datetime.now(timezone.utc)
@@ -205,8 +203,7 @@ class Activity(AuditMixin, DotModel):
         в нём `state="done"` — всем переведённым записям проставится
         полный набор полей done.
         """
-        new_state = getattr(payload, "state", None)
-        if not isinstance(new_state, Field) and new_state == "done":
+        if payload.state == "done":
             payload.active = False
             payload.done = True
             payload.done_datetime = datetime.now(timezone.utc)

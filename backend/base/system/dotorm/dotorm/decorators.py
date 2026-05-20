@@ -180,13 +180,38 @@ class hybridmethod(Generic[_T, _P, _R]):
 
 def depends(*field_names: str) -> Callable[[Callable], Callable]:
     """
-    Декоратор для вычисляемых полей.
-    Указывает, от каких полей зависит вычисление.
-    Поддерживает вложенные зависимости.
+    Декоратор для вычисляемых (stored) полей — аналог @api.depends.
+
+    Помечает async-метод как compute-обработчик. Метод присваивает
+    одно или несколько stored-полей на self. Поля связываются с методом
+    через объявление ``compute="_имя_метода"`` в самом поле.
+
+    Зависимости (`field_names`) задают, при изменении каких полей метод
+    должен пересчитываться. Поддерживаются вложенные пути через точку,
+    например ``"order_line_ids.price_subtotal"`` — пересчёт родителя при
+    изменении строк.
+
+    Движок пересчёта (DotModel.recompute) вызывается:
+      - в ORM при create / create_bulk / update (как будто в write);
+      - на фронтенде через onchange по любому из dep-полей.
+
+    Пример::
+
+        class SaleLine(DotModel):
+            price_subtotal: float = Decimal(
+                16, 2, compute="_compute_amount"
+            )
+
+            @depends("price_unit", "product_uom_qty", "discount")
+            async def _compute_amount(self):
+                self.price_subtotal = self.price_unit * self.product_uom_qty
     """
 
     def decorator(func: Callable) -> Callable:
-        func.compute_deps = set(field_names)
+        deps = tuple(field_names)
+        func._compute_deps = deps  # type: ignore[attr-defined]
+        func.compute_deps = set(deps)  # back-compat
+        func._is_compute = True  # type: ignore[attr-defined]
         return func
 
     return decorator
@@ -308,7 +333,7 @@ def depends(*field_names: str) -> Callable[[Callable], Callable]:
 
 
 # Экспортируем декораторы
-__all__ = ["hybridmethod", "onchange"]
+__all__ = ["hybridmethod", "onchange", "depends"]
 
 
 def onchange(*fields: str):

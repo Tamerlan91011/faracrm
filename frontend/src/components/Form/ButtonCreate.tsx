@@ -103,11 +103,21 @@ export function ButtonCreate({
           // прошлых значений вместо этого он должен просто передать новое
           // необходимо перенести код позже
           const oldSource = parentForm.getValues()[parentFieldName];
-          let old = { created: [], deleted: [] };
-          if (parentFormName in parentForm.getValues())
-            old = parentForm.getValues()[parentFormName];
+          // ButtonUpdate после успешного Save выставляет form._<field> в
+          // null (чтобы Mantine v8 setValues, который МЕРЖИТ, реально
+          // затёр patch, а не сохранил его). Поэтому простого
+          // `in form` мало — ключ есть, но значение null. Проверяем
+          // truthy + наличие created/deleted, иначе берём свежий каркас.
+          const rawOld = parentForm.getValues()[parentFormName];
+          const old =
+            rawOld && typeof rawOld === 'object'
+              ? {
+                  created: rawOld.created || [],
+                  deleted: rawOld.deleted || [],
+                }
+              : { created: [], deleted: [] };
           // добавляем новую строку в родительское скрытое поле
-          let virtualId = oldSource.total + old.created.length;
+          let virtualId = (oldSource?.total || 0) + old.created.length;
           values['_color'] = 'new';
           values['id'] = 'virtual' + virtualId.toString();
 

@@ -42,9 +42,14 @@ import {
   IconLink,
   IconPlus,
   IconDatabaseOff,
+  IconExternalLink,
 } from '@tabler/icons-react';
 import { InlineCell } from './InlineCell';
-import { BooleanCell, RelationCell, DateTimeCell } from '@/components/ListCells';
+import {
+  BooleanCell,
+  RelationCell,
+  DateTimeCell,
+} from '@/components/ListCells';
 import classes from './FieldRelation.module.css';
 
 const PAGE_SIZES = [10, 20, 40, 100];
@@ -60,6 +65,7 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
   deleteSoft = true,
   inline_create = false,
   inline_update = false,
+  quickCreateFields = [],
   ...props
 }: {
   name: string;
@@ -73,6 +79,9 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
   /** Режим инлайн-редактирования. Ячейки становятся input-ами. */
   inline_create?: boolean;
   inline_update?: boolean;
+  /** Имена Many2one-колонок, для которых в инлайн-редакторе
+   *  доступно быстрое создание записи по имени. По умолчанию []. */
+  quickCreateFields?: string[];
 } & Omit<GetListParams, 'fields' | 'model'>) => {
   const [records, setRecords] = useState<RecordType[]>([]);
   const [recordsCreated, setRecordsCreated] = useState<RecordType[]>([]);
@@ -205,12 +214,17 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
   // и возвращает НОВУЮ ссылку даже если содержимое не менялось. Из-за этого
   // useEffect ниже срабатывал при любом изменении формы (например при вводе
   // имени пользователя) и перезаписывал уже добавленные пользователем
-  // записи (через Создать). Фиксируем через deps по id-массиву — ре-
-  // синхронизируем records ТОЛЬКО когда реально изменился набор записей
-  // с сервера.
-  const serverRecordsKey = actualData?.data
-    ? (actualData.data as FaraRecord[]).map(r => r.id).join(',')
-    : '';
+  // записи (через Создать).
+  //
+  // Решение: content-key через JSON.stringify по всему набору строк
+  // (не только по id). Это:
+  //   - не реагирует на смену ссылки defaulValues, пока контент не менялся
+  //     (React сравнивает строки по значению, useEffect не дёрнется);
+  //   - реагирует на ИЗМЕНЕНИЕ ПОЛЕЙ в существующих строках — иначе после
+  //     PUT'а и refetch'а `search` пересчитанные на бэке
+  //     price_subtotal / price_total и т.п. не доезжали до UI: набор id
+  //     строк прежний → старый id-only ключ совпадал → setRecords не звался.
+  const serverRecordsKey = JSON.stringify(actualData?.data ?? null);
 
   useEffect(() => {
     if (!actualData?.data) return;
@@ -233,9 +247,7 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
       const formState = form.getValues()['_' + name];
       const manuallySelectedIds: number[] = formState?.selected || [];
       setRecords(prev => {
-        const serverIds = new Set(
-          serverRecords.map(r => r.id).filter(Boolean),
-        );
+        const serverIds = new Set(serverRecords.map(r => r.id).filter(Boolean));
         const manualOnly = prev.filter(
           r =>
             r.id &&
@@ -252,12 +264,27 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
     }
   }, [serverRecordsKey, id]);
 
+  // Мост form-state → recordsCreated, СИММЕТРИЧНЫЙ и реактивный по
+  // СОДЕРЖИМОМУ patch'а (не по ссылке form, которая в Mantine v8
+  // стабильна и не триггерит этот эффект на setValues).
+  //
+  // Покрывает ВЕСЬ цикл одним правилом — recordsCreated всегда равен
+  // form['_' + name].created (или [], если patch пустой/удалён):
+  //   • modal-create (ButtonCreate в модалке) → parentForm._name.created;
+  //   • inline-add / inline-edit / delete виртуалки;
+  //   • post-Save cleanup в ButtonUpdate → patch undefined → []
+  //   • любая правка из других мест.
+  //
+  // Дeп — JSON.stringify content'а patch'а: пока контент одинаковый —
+  // эффект не запускается; как только содержимое изменилось — синк.
+  // FormProvider Mantine v8 ре-рендерит consumer'ов на setValues, так
+  // что patchKey тут гарантированно перевычисляется при изменениях.
+  const patchKey = JSON.stringify(form.getValues()['_' + name] || null);
   useEffect(() => {
-    const addCreated = form.getValues()['_' + name];
-    if (addCreated) {
-      setRecordsCreated(addCreated.created);
-    }
-  }, [form]);
+    const patch = form.getValues()['_' + name];
+    setRecordsCreated(patch?.created || []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patchKey]);
 
   // Columns
   const columns: DataTableColumn[] = [];
@@ -341,6 +368,7 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
               fieldType={field.type}
               options={field.options}
               relation={field.relation || field.relatedModel}
+              quickCreate={quickCreateFields.includes(field.name)}
               onChange={newValue =>
                 handleInlineCellChange(row, field.name, newValue)
               }
@@ -398,7 +426,7 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
   columns.push({
     accessor: 'actions',
     title: '',
-    width: 50,
+    width: 80,
     sortable: false,
     render: record => (
       <Group
@@ -406,6 +434,22 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
         justify="center"
         wrap="nowrap"
         className={classes.rowActions}>
+        {/* Открыть запись в её форме (drill-in). Доступно всегда,
+            в т.ч. при inline_update, когда onRowClick отключён. */}
+        {record.id && !record.id.toString().startsWith('virtual') && (
+          <Tooltip label="Открыть" position="left" withArrow>
+            <ActionIcon
+              size="sm"
+              variant="subtle"
+              color="gray"
+              onClick={event => {
+                event.stopPropagation();
+                navigate(`/${fieldsServer[name].relatedModel}/${record.id}`);
+              }}>
+              <IconExternalLink size={14} />
+            </ActionIcon>
+          </Tooltip>
+        )}
         <Tooltip label="Удалить" position="left" withArrow>
           <ActionIcon
             size="sm"
@@ -413,37 +457,79 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
             color="red"
             onClick={event => {
               event.stopPropagation();
-              if (record._color === 'delete') record._color = false;
-              else record._color = 'delete';
 
-              if (record.id && !record.id.toString().startsWith('virtual')) {
+              // Виртуальная строка ещё не на сервере → soft-delete не
+              // имеет смысла. Полностью убираем её и из локального
+              // recordsCreated, и из form['_' + name].created, чтобы на
+              // Save она просто не ушла. Никакого `_color = 'delete'` тут
+              // не выставляем — строка должна исчезнуть.
+              if (record.id?.toString().startsWith('virtual')) {
+                setRecordsCreated(prev =>
+                  prev.filter(r => r.id !== record.id),
+                );
                 const parentFormName = '_' + name;
-                let old = { created: [], deleted: [] };
-                if (parentFormName in form.getValues())
-                  old = form.getValues()[parentFormName];
-
-                let newDeleted = [...old.deleted, record.id];
-                if (!record._color) {
-                  for (let i = 0; i < old.deleted.length; i++) {
-                    if (old.deleted[i] === record.id) {
-                      old.deleted[i] = old.deleted[old.deleted.length - 1];
-                      old.deleted.pop();
-                      break;
-                    }
-                  }
-                  newDeleted = [...old.deleted];
-                }
-
+                const old = form.getValues()[parentFormName] || {
+                  created: [],
+                  deleted: [],
+                };
                 form.setValues({
                   [parentFormName]: {
-                    ...(deleteSoft
-                      ? { unselected: newDeleted }
-                      : { deleted: newDeleted }),
-                    created: old.created,
-                    fieldsServer: fieldsServer,
+                    ...old,
+                    created: (old.created || []).filter(
+                      (c: any) => c.id !== record.id,
+                    ),
                   },
                 });
+                return;
               }
+
+              if (!record.id) return;
+
+              // Real-row soft/hard delete с поддержкой множественного
+              // выбора и toggle (повторный клик — снять флаг удаления).
+              //
+              // BUG was: код читал `old.deleted` и при deleteSoft=true
+              // писал в `old.unselected`, не зная что предыдущий клик
+              // уже положил id'ы туда же. На втором клике `old.deleted`
+              // оказывался undefined → spread бросал TypeError, состояние
+              // в форме не обновлялось, но record._color уже мутирован —
+              // отсюда «покрашена только одна строка из нескольких».
+              //
+              // Fix: ключ выбирается один раз исходя из deleteSoft и
+              // используется и для чтения, и для записи; toggle через
+              // filter без мутации массива; record._color обновляется
+              // ТОЛЬКО если форма успешно записана.
+              const parentFormName = '_' + name;
+              const deletedKey = deleteSoft ? 'unselected' : 'deleted';
+              const old = form.getValues()[parentFormName] || {};
+              const currentDeleted: (number | string)[] =
+                old[deletedKey] || [];
+              const alreadyMarked = currentDeleted.includes(
+                record.id as number,
+              );
+
+              const newDeleted = alreadyMarked
+                ? currentDeleted.filter(itemId => itemId !== record.id)
+                : [...currentDeleted, record.id];
+
+              form.setValues({
+                [parentFormName]: {
+                  ...old,
+                  [deletedKey]: newDeleted,
+                  created: old.created || [],
+                  fieldsServer: fieldsServer,
+                },
+              });
+              form.setDirty({ [parentFormName]: true });
+
+              // Локальная пометка цветом: переключаем относительно того,
+              // что мы только что записали в форму. Прямая мутация record
+              // оставлена для совместимости с DataTable rowBackgroundColor,
+              // но теперь она консистентна с состоянием формы.
+              record._color = alreadyMarked ? false : 'delete';
+              // Принудительно перерендерим таблицу: меняем records по
+              // ссылке, чтобы DataTable увидел новый _color.
+              setRecords(prev => [...prev]);
             }}>
             <IconTrash size={14} />
           </ActionIcon>
@@ -592,13 +678,20 @@ export const FieldOne2many = <RecordType extends FaraRecord>({
                     }
                   }
             }
-            // Pagination
-            totalRecords={totalRecords}
-            recordsPerPage={pageSize}
-            page={page}
-            onPageChange={setPage}
-            recordsPerPageOptions={PAGE_SIZES}
-            onRecordsPerPageChange={setPageSize}
+            // Пагинация — как в списках: показываем только если
+            // total больше размера страницы по умолчанию
+            // (PAGE_SIZES[0]); иначе всё помещается на одну страницу
+            // и пагинация не нужна.
+            {...(totalRecords > PAGE_SIZES[0]
+              ? {
+                  totalRecords,
+                  recordsPerPage: pageSize,
+                  page,
+                  onPageChange: setPage,
+                  recordsPerPageOptions: PAGE_SIZES,
+                  onRecordsPerPageChange: setPageSize,
+                }
+              : {})}
             paginationText={({ from, to, totalRecords }) =>
               `${from}–${to} из ${totalRecords}`
             }

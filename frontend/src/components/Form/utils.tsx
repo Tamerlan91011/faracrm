@@ -14,6 +14,8 @@ const LAYOUT_COMPONENTS = [
   'FormAvatarField',
   'FieldContacts', // Кастомный виджет контактов
   'AttachmentPreviewCard', // Превью карточка вложения
+  'SalesTotalsSummary', // Блок итогов заказа: рендерит свой UI,
+  // children (объявленные amount_* поля) только для выборки с сервера
 ];
 
 /**

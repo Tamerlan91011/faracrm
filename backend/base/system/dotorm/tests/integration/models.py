@@ -214,7 +214,7 @@ class AllFieldTypes(BaseModel):
     bool_default_false: bool = Boolean(default=False)
 
     # Numeric types
-    decimal_field: "float | None" = Decimal(max_digits=10, decimal_places=2)
+    decimal_field: float = Decimal(max_digits=10, decimal_places=2)
     float_field: float | None = Float()
 
     # Date/Time types

@@ -1,6 +1,7 @@
 import { Button } from '@mantine/core';
 import { FormFieldsContext, useFormContext } from './FormContext';
-import { useUpdateMutation } from '@/services/api/crudApi';
+import { useUpdateMutation, crudApi } from '@/services/api/crudApi';
+import { useDispatch } from 'react-redux';
 import { FaraRecord, Identifier } from '@/services/api/crudTypes';
 import { Field } from '@/types/fields';
 import { useContext, useState } from 'react';
@@ -66,6 +67,7 @@ export function ButtonUpdate({
   const { fields: fieldsServer } = useContext(FormFieldsContext);
   const form = useFormContext();
   const [update] = useUpdateMutation();
+  const dispatch = useDispatch();
   const [saving, setSaving] = useState(false);
 
   const handleSave = async () => {
@@ -81,15 +83,23 @@ export function ButtonUpdate({
 
       // Собираем имена M2M/O2M полей с изменениями для инвалидации кеша
       const invalidateTags: string[] = [];
+      // Связанные модели O2M/M2M, чьи данные пересчитал бэкенд
+      // (через @depends) — их список нужно перезапросить после save.
+      const relatedModelsToRefetch = new Set<string>();
       for (const key of Object.keys(values)) {
         if (key.startsWith('_')) {
           const v = values[key];
-          if (
+          const hasChanges =
             v?.unselected?.length ||
             v?.created?.length ||
-            v?.selected?.length
-          ) {
-            invalidateTags.push(key.slice(1)); // '_role_ids' -> 'role_ids'
+            v?.selected?.length ||
+            v?.deleted?.length ||
+            (v?.updated && Object.keys(v.updated).length);
+          if (hasChanges) {
+            const fieldName = key.slice(1); // '_role_ids' -> 'role_ids'
+            invalidateTags.push(fieldName);
+            const rel = fieldsServer[fieldName]?.relatedModel;
+            if (rel) relatedModelsToRefetch.add(rel);
           }
         }
       }
@@ -103,9 +113,52 @@ export function ButtonUpdate({
         invalidateTags,
       });
 
-      // Сбрасываем dirty — кнопка исчезнет, Toolbar покажет галочку
-      const currentValues = form.getValues();
-      form.resetDirty(currentValues);
+      // После сохранения бэкенд пересчитал зависимые поля строк
+      // (price_subtotal/price_total и др. через @depends). Кэш
+      // связанной модели при сохранении родителя автоматически НЕ
+      // инвалидируется — делаем это вручную, чтобы O2M перезапросил
+      // строки и показал пересчитанные значения, а не старые.
+      if (relatedModelsToRefetch.size) {
+        dispatch(
+          crudApi.util.invalidateTags(
+            [...relatedModelsToRefetch].map(
+              m => ({ type: m, id: 'LIST' }) as any,
+            ),
+          ),
+        );
+      }
+
+      // Все `_*` патчи (O2M/M2M command-dict'ы вида
+      // _order_line_ids = {created/updated/deleted/unselected/selected})
+      // уже отправлены и применены на сервере. Держать их дальше в форме
+      // нельзя:
+      //   1) FieldOne2many читает form['_name'] для синхронизации
+      //      recordsCreated — без зачистки virtual-строки возвращаются
+      //      на следующий ре-рендер.
+      //   2) Повторное нажатие Save без новых правок отправило бы те же
+      //      команды второй раз.
+      //
+      // ВАЖНО: Mantine v8 `form.setValues` МЕРЖИТ, а не заменяет — попытка
+      // `delete cleaned[key]` + setValues(cleaned) бесполезна, Mantine
+      // допишет старые `_*` обратно из текущего состояния. Поэтому каждый
+      // `_*` ключ явно ставим в null — это значение, которое реально
+      // запишется и затрёт patch (FieldOne2many трактует null/undefined
+      // одинаково через `patch?.created || []`).
+      const reset: Record<string, any> = {};
+      for (const key of Object.keys(form.getValues())) {
+        if (key.startsWith('_')) {
+          reset[key] = null;
+        }
+      }
+      if (Object.keys(reset).length) {
+        form.setValues(reset);
+      }
+
+      // Baseline для dirty — АКТУАЛЬНОЕ состояние формы после
+      // setValues(reset), включая `_*: null`. Иначе Mantine посчитает
+      // форму грязной (null в form vs отсутствие ключа в baseline) и
+      // кнопка Save не погаснет.
+      form.resetDirty(form.getValues());
       onSaveSuccess?.();
     } catch (error) {
       // TODO: показать ошибку

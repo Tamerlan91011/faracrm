@@ -1,12 +1,13 @@
 import { Combobox, InputBase, useCombobox } from '@mantine/core';
 import { ReactElement, useContext, useEffect, useState, useMemo } from 'react';
-import { IconChevronDown } from '@tabler/icons-react';
+import { IconChevronDown, IconPlus } from '@tabler/icons-react';
+import { notifications } from '@mantine/notifications';
 import {
   BaseQueryFn,
   TypedUseQueryHookResult,
 } from '@reduxjs/toolkit/query/react';
 import { FormFieldsContext, useFormContext } from '../FormContext';
-import { useSearchQuery } from '@/services/api/crudApi';
+import { useSearchQuery, useCreateMutation } from '@/services/api/crudApi';
 import {
   FaraRecord,
   GetListParams,
@@ -15,6 +16,8 @@ import {
 } from '@/services/api/crudTypes';
 import { FieldWrapper } from './FieldWrapper';
 import { LabelPosition } from '../FormSettingsContext';
+
+const QUICK_CREATE_VALUE = '__quick_create__';
 
 interface FieldMany2oneProps {
   name: string;
@@ -26,6 +29,11 @@ interface FieldMany2oneProps {
   required?: boolean;
   /** Поле связанной модели для отображения и поиска. По умолчанию 'name'. */
   displayField?: string;
+  /** Быстрое создание записи по введённому тексту. По умолчанию выкл. */
+  quickCreate?: boolean;
+  /** Поле, в которое писать введённый текст при быстром создании.
+   *  По умолчанию = displayField (или 'name', если displayField='id'). */
+  quickCreateField?: string;
   filter?: Triplet[] | ((values: Record<string, any>) => Triplet[]); // Статичный домен или функция
   [key: string]: any;
 }
@@ -36,9 +44,11 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
   labelPosition,
   sortKey = 'id',
   sortDirection = 'asc',
-  limit = 80,
+  limit = 10,
   required,
   displayField = 'name',
+  quickCreate = false,
+  quickCreateField,
   filter,
   ...props
 }: FieldMany2oneProps) => {
@@ -52,6 +62,11 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
   const [options, setOptions] = useState<ReactElement[]>();
   const [startFetch, setStartFetch] = useState(false);
   const displayLabel = label ?? name;
+
+  const relatedModel = fieldsServer[name]?.relatedModel || '';
+  const [createRecord] = useCreateMutation();
+  const createField =
+    quickCreateField || (displayField !== 'id' ? displayField : 'name');
 
   // Вычисляем домен - статичный или через функцию
   const filterDomain = useMemo((): Triplet[] => {
@@ -75,7 +90,7 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
 
   const { data, isLoading } = useSearchQuery(
     {
-      model: fieldsServer[name]?.relatedModel || '',
+      model: relatedModel,
       limit,
       sort: sortKey,
       order: sortDirection,
@@ -102,6 +117,29 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
       setOptions(optionsData);
     }
   }, [data]);
+
+  // Пункт "Создать «...»" — когда включён quickCreate, есть введённый
+  // текст и нет точного совпадения по displayField.
+  const trimmedSearch = search.trim();
+  const hasExactMatch = useMemo(
+    () =>
+      !!data?.data.some(
+        r =>
+          String(r[displayField] ?? '').toLowerCase() ===
+          trimmedSearch.toLowerCase(),
+      ),
+    [data, displayField, trimmedSearch],
+  );
+  const showQuickCreate =
+    quickCreate && !!relatedModel && !!trimmedSearch && !hasExactMatch;
+
+  const selectRecord = (record: FaraRecord) => {
+    if (onchangeFields?.includes(name) && handleFieldChange) {
+      handleFieldChange(name, record);
+    } else {
+      form.setValues({ [name]: record });
+    }
+  };
 
   const combobox = useCombobox({
     onDropdownClose: () => {
@@ -136,18 +174,32 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
             width={250}
             position="bottom-start"
             withArrow
-            onOptionSubmit={val => {
+            onOptionSubmit={async val => {
+              if (val === QUICK_CREATE_VALUE) {
+                try {
+                  const created = await createRecord({
+                    model: relatedModel,
+                    values: { [createField]: trimmedSearch },
+                  }).unwrap();
+                  selectRecord({
+                    id: created.id,
+                    [displayField]: trimmedSearch,
+                  } as FaraRecord);
+                } catch {
+                  notifications.show({
+                    color: 'red',
+                    message: 'Не удалось создать запись',
+                  });
+                }
+                combobox.closeDropdown();
+                return;
+              }
               if (data) {
                 const record = data.data.find(obj => {
                   return obj.id.toString() === val;
                 });
                 if (record) {
-                  if (onchangeFields?.includes(name) && handleFieldChange) {
-                    // setValue + onchange в одном вызове
-                    handleFieldChange(name, record);
-                  } else {
-                    form.setValues({ [name]: record });
-                  }
+                  selectRecord(record);
                 }
               }
               combobox.closeDropdown();
@@ -197,8 +249,24 @@ export const FieldMany2one = <RecordType extends FaraRecord>({
                   <Combobox.Empty>Загрузка...</Combobox.Empty>
                 ) : options && !!options.length ? (
                   options
-                ) : (
+                ) : !showQuickCreate ? (
                   <Combobox.Empty>Ничего не найдено</Combobox.Empty>
+                ) : null}
+                {showQuickCreate && (
+                  <Combobox.Option
+                    value={QUICK_CREATE_VALUE}
+                    key={QUICK_CREATE_VALUE}>
+                    <span
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 6,
+                        color: 'var(--mantine-color-blue-6)',
+                      }}>
+                      <IconPlus size={14} />
+                      Создать «{trimmedSearch}»
+                    </span>
+                  </Combobox.Option>
                 )}
               </Combobox.Options>
             </Combobox.Dropdown>
