@@ -240,8 +240,14 @@ class OrmPrimaryMixin(_Base):
 
         # @depends на НОВОМ состоянии: каскад по затронутым полям.
         # FK для нового родителя, если был в payload, поднимет Stage 2.
+        # Лишний SELECT + пересчёт нужны, только если у модели вообще есть
+        # @depends-триггеры — свои локальные computes или родительские (где
+        # self — ребёнок). Иначе _fire_depends гарантированно no-op, и
+        # перечитывать строки незачем (у моделей без @depends таблицы пусты).
         changed = list(payload_dict.keys())
-        if changed:
+        if changed and (
+            cls._depends_local_triggers or cls._depends_parent_triggers
+        ):
             recs = await cls.search(
                 filter=[("id", "in", list(ids))], session=session
             )
