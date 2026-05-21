@@ -42,22 +42,19 @@ class OrmPrimaryMixin(_Base):
     - prepare_form_id()
     """
 
-    async def delete(self, session=None):
+    async def delete(self, session=None, collect=None):
         await self._check_access(Operation.DELETE, record_ids=[self.id])
 
         session = self._get_db_session(session)
         stmt = self._builder.build_delete()
         result = await session.execute(stmt, [self.id], cursor="void")
 
-        # @depends: триггеры по полям self (включая FK) — Stage 2
-        # поднимет родителей через _depends_parent_triggers, Stage 1 локально
-        # обычно бездействует (FK как правило не входит в local_triggers).
-        await self._fire_depends(self.assigned_fields(), session)
-
+        # @depends: триггеры по полям self (включая FK) → подъём родителей.
+        await self._collect_and_flush(self.assigned_fields(), collect, session)
         return result
 
     @hybridmethod
-    async def delete_bulk(self, ids: list[int], session=None):
+    async def delete_bulk(self, ids: list[int], session=None, collect=None):
         cls = self.__class__
 
         # Пустой список — нечего удалять и нечего пересчитывать.
@@ -70,6 +67,7 @@ class OrmPrimaryMixin(_Base):
         await cls._check_access(Operation.DELETE, record_ids=ids)
 
         session = cls._get_db_session(session)
+        collect, owner = cls._depends_open(collect)
 
         # @depends: предзагружаем записи ДО удаления, чтобы знать FK
         # для подъёма родителей через _depends_parent_triggers (после
@@ -90,8 +88,9 @@ class OrmPrimaryMixin(_Base):
             result = await session.execute(stmt, ids, cursor="void")
 
         for rec in pre_fetched:
-            await rec._fire_depends(rec.assigned_fields(), session)
+            await rec._collect_depends(rec.assigned_fields(), collect, session)
 
+        await cls._depends_flush(collect, owner, session)
         return result
 
     async def update(
@@ -99,6 +98,7 @@ class OrmPrimaryMixin(_Base):
         payload: "_M",
         fields: list[str] | None = None,
         session=None,
+        collect=None,
     ):
         """
         Обновить запись.
@@ -136,20 +136,20 @@ class OrmPrimaryMixin(_Base):
         if not fields:
             return
 
-        # SQL UPDATE для store-полей + обработка relation-полей
-        # (O2M/M2M command-dict разворачивается на per-child create/update/
-        # delete внутри _update_relations — там сработает _fire_depends).
-        await self._update_relations(payload, fields, session)
+        collect, owner = self._depends_open(collect)
+
+        # SQL UPDATE для store-полей + обработка relation-полей.
+        # collect прокидывается детям (_update_relations → create_bulk/
+        # delete_bulk/update_bulk/rec.update): их родительские пересчёты
+        # копятся в общий аккумулятор и выполняются один раз ниже (owner).
+        await self._update_relations(payload, fields, session, collect=collect)
 
         # Синхронизировать self с payload после успешного обновления
         if payload is not self:
             self._sync_after_update(payload, fields)
 
-        # @depends: запустить локальные computes по изменённым полям +
-        # поднять родителей через _depends_parent_triggers. Cross-model каскад
-        # уже мог отработать через дочерние writes внутри
-        # _update_relations — повторный запуск компьюта идемпотентен.
-        await self._fire_depends(list(fields), session)
+        # @depends: локальные computes self + (если owner) подъём родителей.
+        await self._collect_and_flush(list(fields), collect, session, owner)
 
     def _sync_after_update(self, payload: "_M", fields: list[str]):
         """
@@ -195,6 +195,7 @@ class OrmPrimaryMixin(_Base):
         ids: list[int],
         payload: _M,
         session=None,
+        collect=None,
     ):
         cls = self.__class__
 
@@ -208,6 +209,7 @@ class OrmPrimaryMixin(_Base):
         await cls._check_access(Operation.UPDATE, record_ids=ids)
 
         session = cls._get_db_session(session)
+        collect, owner = cls._depends_open(collect)
 
         payload_dict = payload.json(
             exclude=payload.get_none_update_fields_set(),
@@ -224,10 +226,12 @@ class OrmPrimaryMixin(_Base):
         # Делаем только если в payload есть FK, на которые подписан
         # parent-trigger — иначе лишний SELECT.
         fk_attrs_in_payload: set[str] = set()
-        for trig in getattr(cls, "_depends_parent_triggers", []) or []:
-            _parent_model, fk_attr, _child_field, _method = trig
-            if fk_attr in payload_dict:
-                fk_attrs_in_payload.add(fk_attr)
+        for trigs in (
+            getattr(cls, "_depends_parent_triggers", {}) or {}
+        ).values():
+            for _parent_model, fk_attr, _method in trigs:
+                if fk_attr in payload_dict:
+                    fk_attrs_in_payload.add(fk_attr)
 
         pre_fetched_old: list = []
         if fk_attrs_in_payload:
@@ -242,7 +246,7 @@ class OrmPrimaryMixin(_Base):
         # FK для нового родителя, если был в payload, поднимет Stage 2.
         # Лишний SELECT + пересчёт нужны, только если у модели вообще есть
         # @depends-триггеры — свои локальные computes или родительские (где
-        # self — ребёнок). Иначе _fire_depends гарантированно no-op, и
+        # self — ребёнок). Иначе _collect_depends ничего не соберёт, и
         # перечитывать строки незачем (у моделей без @depends таблицы пусты).
         changed = list(payload_dict.keys())
         if changed and (
@@ -254,7 +258,7 @@ class OrmPrimaryMixin(_Base):
             for rec in recs:
                 for k, v in payload_dict.items():
                     setattr(rec, k, v)
-                await rec._fire_depends(changed, session)
+                await rec._collect_depends(changed, collect, session)
 
         # @depends на СТАРОМ родителе: для каждой записи проверяем, какой
         # FK реально менялся (old != new), и фаерим stub со старым FK.
@@ -270,12 +274,13 @@ class OrmPrimaryMixin(_Base):
                     continue
                 stub = cls(id=old_rec.id)
                 setattr(stub, fk_attr, old_fk)
-                await stub._fire_depends([fk_attr], session)
+                await stub._collect_depends([fk_attr], collect, session)
 
+        await cls._depends_flush(collect, owner, session)
         return result
 
     @hybridmethod
-    async def create(self, payload: _M, session=None) -> int:
+    async def create(self, payload: _M, session=None, collect=None) -> int:
         cls = self.__class__
 
         # Проверяем table access до создания
@@ -315,8 +320,9 @@ class OrmPrimaryMixin(_Base):
         # единого пути create/update; pre-INSERT compute убран ради
         # одной точки запуска @depends.
         payload.id = record_id
-        await payload._fire_depends(payload.assigned_fields(), session)
-
+        await payload._collect_and_flush(
+            payload.assigned_fields(), collect, session
+        )
         return record_id
 
     def _check_translated_field(self, field_name):
@@ -370,13 +376,14 @@ class OrmPrimaryMixin(_Base):
         )
 
     @hybridmethod
-    async def create_bulk(self, payload: list[_M], session=None):
+    async def create_bulk(self, payload: list[_M], session=None, collect=None):
         cls = self.__class__
 
         # Проверяем table access до создания
         await cls._check_access(Operation.CREATE)
 
         session = cls._get_db_session(session)
+        collect, owner = cls._depends_open(collect)
 
         exclude_fields = {
             name
@@ -411,8 +418,9 @@ class OrmPrimaryMixin(_Base):
             await cls._check_access(Operation.CREATE, record_ids=created_ids)
             for p, rid in zip(payload, created_ids):
                 p.id = rid
-                await p._fire_depends(p.assigned_fields(), session)
+                await p._collect_depends(p.assigned_fields(), collect, session)
 
+        await cls._depends_flush(collect, owner, session)
         return records
 
     @staticmethod
@@ -583,8 +591,8 @@ class OrmPrimaryMixin(_Base):
     # ---- @depends: cross-model trigger engine ---------------------------
     # Двух-этапный пересчёт поверх @depends.
     #
-    # Хук self._fire_depends(changed_fields, session) вызывается из
-    # delete/update/create ПОСЛЕ успешного SQL.
+    # Хук self._collect_depends(changed_fields, collect, session) вызывается
+    # из delete/update/create ПОСЛЕ успешного SQL и только НАПОЛНЯЕТ collect.
     #
     # Этап 1 (локально): по каждому изменённому полю поднимаются
     # @depends-методы самой модели через таблицу _depends_local_triggers
@@ -593,9 +601,10 @@ class OrmPrimaryMixin(_Base):
     #
     # Этап 2 (cross-model): по каждому полю смотрится таблица
     # _depends_parent_triggers (инверсия dotted-deps родителей),
-    # резолвится FK, собираются job-ы родителей и пересчитываются.
+    # резолвится FK, job-ы родителей складываются в collect (запуск —
+    # позже, в _fire_parent_depends у owner'а операции).
     #
-    # Compute пишет stored-поля → каскад через рекурсивный _fire_depends
+    # Compute пишет stored-поля → каскад через _collect_depends
     # на множестве `written`.
     #
     # Таблицы строятся ОДНОКРАТНО при регистрации моделей в env.models
@@ -617,13 +626,14 @@ class OrmPrimaryMixin(_Base):
           не попадают: их покрывает _depends_parent_triggers на ребёнке.
 
         - _depends_parent_triggers:
-          [(ParentModel, fk_attr, child_field, method), ...] —
+          {child_field: {(ParentModel, fk_attr, method), ...}} —
           методы РОДИТЕЛЕЙ, которые пересчитываются при изменении
-          child_field у self (self здесь — ребёнок). Резолвится из
-          dotted @depends("o2m.X") родителя через
-          head.relation_table / head.relation_table_field. На каждый
-          dotted dep дополнительно регистрируется «структурный»
-          триггер на inverse_fk (create/delete/reassign ребёнка с FK).
+          child_field у self (self здесь — ребёнок). Ключ — поле ребёнка
+          (прямой lookup), значение — множество (родитель, FK, метод) с
+          авто-дедупом. Резолвится из dotted @depends("o2m.X") родителя
+          через head.relation_table / head.relation_table_field. На каждый
+          dotted dep дополнительно регистрируется «структурный» триггер под
+          ключом-FK (create/delete/reassign ребёнка).
 
         - _depends_prefetch: {method_name → {head_field → [tail_fields]}} —
           какие RELATION-поля и с какими nested-полями надо догружать
@@ -647,7 +657,7 @@ class OrmPrimaryMixin(_Base):
         models = list(models)
         for klass in models:
             klass._depends_local_triggers = {}
-            klass._depends_parent_triggers = []
+            klass._depends_parent_triggers = {}
             klass._depends_prefetch = {}
 
         for klass in models:
@@ -673,12 +683,16 @@ class OrmPrimaryMixin(_Base):
                         if child is None or fk is None:
                             continue
                         if "_depends_parent_triggers" not in child.__dict__:
-                            child._depends_parent_triggers = []
-                        child._depends_parent_triggers.append(
-                            (klass, fk, tail, method_name)
+                            child._depends_parent_triggers = {}
+                        # {child_field → {(Parent, fk, method)}} с авто-дедупом:
+                        # триггер по изменению tail-поля ребёнка и структурный
+                        # под ключом-FK (create/delete/reassign ребёнка).
+                        ptable = child._depends_parent_triggers
+                        ptable.setdefault(tail, set()).add(
+                            (klass, fk, method_name)
                         )
-                        child._depends_parent_triggers.append(
-                            (klass, fk, fk, method_name)
+                        ptable.setdefault(fk, set()).add(
+                            (klass, fk, method_name)
                         )
                     else:
                         field = all_fields.get(dep)
@@ -719,57 +733,114 @@ class OrmPrimaryMixin(_Base):
                 for head, tails in head_map.items():
                     head_map[head] = sorted(tails)
 
-    async def _fire_depends(self, changed_fields, session=None) -> None:
-        """Запустить @depends по изменённым полям self.
+    @staticmethod
+    def _depends_open(collect):
+        """Открыть scope @depends → (collect, owner). owner=True у самого
+        внешнего вызова (collect не передан): он создаёт аккумулятор и в конце
+        сольёт его. Вложенные получают чужой collect и только копят."""
+        return (collect, False) if collect is not None else ({}, True)
 
-        Этап 1 — локальные computes на self.
-        Этап 2 — computes родителей через _depends_parent_triggers (cross-model).
-        Каскад через рекурсию: compute пишет stored-поля → _fire_depends
-        на этих полях.
+    @classmethod
+    async def _depends_flush(cls, collect, owner, session=None) -> None:
+        """Слить накопленные родительские пересчёты — только если owner.
+        Для bulk-методов: вызывается после цикла _collect_depends по строкам.
+        """
+        if owner:
+            await cls._fire_parent_depends(collect, session)
+
+    async def _collect_and_flush(
+        self, changed_fields, collect, session=None, owner=None
+    ) -> None:
+        """Собрать @depends по полям записи и (если owner) слить родителей.
+
+        owner=None (по умолчанию) → определить владение самому из collect: так
+        одиночные create/delete зовут это ОДНОЙ строкой, без _depends_open
+        наверху (collect им в теле не нужен). Если collect нужен и в теле
+        метода (update → _update_relations; bulk-циклы) — open делается заранее
+        через _depends_open, а owner передаётся сюда явно."""
+        if owner is None:
+            collect, owner = self._depends_open(collect)
+        await self._collect_depends(changed_fields, collect, session)
+        await self._depends_flush(collect, owner, session)
+
+    async def _collect_depends(
+        self, changed_fields, collect, session=None
+    ) -> None:
+        """Обработать изменённые поля self В аккумулятор collect.
+
+        Координатор двух этапов; родителей НЕ запускает:
+          Этап 1 — _fire_local_depends: пересчитать локальные computes self
+                   (их записи каскадно проходят сюда же);
+          Этап 2 — _collect_parent_depends: сложить jobs родителей в collect.
+        Запуск родителей — отдельно, в _fire_parent_depends (его зовёт owner
+        CRUD-операции в самом конце). collect обязателен.
 
         Таблицы триггеров построены однократно при регистрации моделей
-        в env.models (см. _build_depends_tables) — никакой ленивой
-        инициализации тут больше нет."""
-        cls = self.__class__
+        в env.models (см. _build_depends_tables)."""
+        await self._fire_local_depends(changed_fields, collect, session)
+        self._collect_parent_depends(changed_fields, collect)
 
-        # Этап 1: локальные методы (set-дедуп).
+    async def _fire_local_depends(
+        self, changed_fields, collect, session=None
+    ) -> None:
+        """Этап 1: пересчитать локальные @depends-computes self по изменённым
+        полям. Записанные ими stored-поля каскадно проходят _collect_depends
+        (через _fire_compute) с тем же collect."""
+        cls = self.__class__
         local_methods: set[str] = set()
         for f in changed_fields:
             local_methods |= cls._depends_local_triggers.get(f, set())
-        if local_methods:
-            for m in cls._cache_compute_order:
-                if m in local_methods:
-                    await self._run_compute(m, session)
+        if not local_methods:
+            return
+        for m in cls._cache_compute_order:
+            if m in local_methods:
+                await self._fire_compute(m, collect, session)
 
-        # Этап 2: родители через инверсную FK.
-        parent_jobs: dict[tuple[type, int], set[str]] = {}
+    def _collect_parent_depends(self, changed_fields, collect) -> None:
+        """Этап 2: сложить родительские jobs в collect — какие computes каких
+        родителей пересчитать при изменении полей self (self здесь — ребёнок).
+        Чистый bookkeeping: ни await, ни запусков (поэтому обычный def).
+
+        _depends_parent_triggers — {child_field: {(Parent, fk, method)}},
+        поэтому по изменённому полю идёт прямой lookup, без скана-фильтра."""
+        cls = self.__class__
+        parent_triggers = getattr(cls, "_depends_parent_triggers", {}) or {}
         for f in changed_fields:
-            for Parent, child_fk, child_field, parent_method in (
-                getattr(cls, "_depends_parent_triggers", []) or []
-            ):
-                if f != child_field:
-                    continue
+            for Parent, child_fk, parent_method in parent_triggers.get(f, ()):
                 fk_val = getattr(self, child_fk, None)
-                if fk_val is None:
-                    continue
                 if hasattr(fk_val, "id"):
                     fk_val = fk_val.id
                 if isinstance(fk_val, int):
-                    parent_jobs.setdefault((Parent, fk_val), set()).add(
+                    collect.setdefault((Parent, fk_val), set()).add(
                         parent_method
                     )
 
-        for (Parent, pid), methods in parent_jobs.items():
+    @staticmethod
+    async def _fire_parent_depends(collect, session=None) -> None:
+        """Прогнать накопленные родительские пересчёты до фикс-точки.
+
+        Единственное место, где родители реально выполняются. Пересчёт
+        родителя через _fire_compute пишет stored-поля и каскадно докладывает
+        деда в ТОТ ЖЕ collect — цикл while это подхватывает (и дедупит).
+
+        collect — {(ParentClass, parent_id): set(method_names)}."""
+        while collect:
+            (Parent, pid), methods = collect.popitem()
             parent = await Parent.get_or_none(pid, session=session)
             if parent is None:
                 continue
             for m in Parent._cache_compute_order:
                 if m in methods:
-                    await parent._run_compute(m, session)
+                    await parent._fire_compute(m, collect, session)
 
-    async def _run_compute(self, method_name: str, session=None) -> None:
-        """Запустить один compute, персистнуть выходные stored-поля и
-        каскадно дёрнуть _fire_depends на записанные поля.
+    async def _fire_compute(
+        self, method_name: str, collect, session=None
+    ) -> None:
+        """Выполнить один @depends-compute, записать выходные stored-поля и
+        каскадно обработать их через _collect_depends (в тот же collect).
+
+        collect обязателен: родительские пересчёты от записанных полей копятся
+        в общий аккумулятор операции, а выполняются в _fire_parent_depends.
 
         Перед запуском handler'а догружает relation-поля, объявленные в
         dotted @depends этого метода (через _ensure_prefetch_for_method),
@@ -787,7 +858,7 @@ class OrmPrimaryMixin(_Base):
         if written:
             roll = cls(**{w: getattr(self, w) for w in written})
             await self._update_store(roll, list(written), session)
-            await self._fire_depends(written, session)
+            await self._collect_depends(written, collect, session)
 
     async def _ensure_prefetch_for_method(
         self, method_name: str, session=None

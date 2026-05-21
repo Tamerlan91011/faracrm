@@ -218,18 +218,18 @@ class DotModel(
 
     @classmethod
     def _build_compute_cache(cls):
-        """Собрать @depends-методы для движка _fire_depends + recompute().
+        """Собрать @depends-методы для движка _collect_depends + recompute().
 
         Заполняет per-class:
         - _cache_compute_method_deps: {method → tuple(deps)} —
           вход для OrmPrimaryMixin._build_depends_tables (строит
           _depends_local_triggers / _depends_parent_triggers).
         - _cache_compute_writes: {method → set(written_fields)} —
-          OrmPrimaryMixin._run_compute персистит эти поля и каскадирует.
+          OrmPrimaryMixin._fire_compute персистит эти поля и каскадирует.
         - _cache_compute_by_dep: {dep_local_segment → set(methods)} —
           вход для recompute() (in-memory путь, см. execute_onchange).
         - _cache_compute_order: list[method_name] — порядок объявления,
-          без топосорта. Каскад через _fire_depends на written-полях
+          без топосорта. Каскад через _collect_depends на written-полях
           сам подтягивает downstream-методы — отдельная сортировка не
           нужна.
         - _cache_has_compute_methods: bool.
@@ -318,7 +318,7 @@ class DotModel(
 
         Используется ИСКЛЮЧИТЕЛЬНО из execute_onchange — там нужно
         пересчитать поля для возврата на форму, не записывая в БД.
-        В CRUD-пути работает _fire_depends (он же персистит результат
+        В CRUD-пути работает _collect_depends (он же персистит результат
         и поднимает родителей через _depends_parent_triggers).
 
         Args:
@@ -350,7 +350,7 @@ class DotModel(
             if handler is None:
                 continue
             # Догружаем relation-поля, объявленные в dotted @depends
-            # этого метода — тот же контракт, что в _run_compute из
+            # этого метода — тот же контракт, что в _fire_compute из
             # CRUD-пути. Compute читает self.tax_id.amount и
             # self.order_line_ids[i].price_subtotal без fetch'ей внутри.
             await self._ensure_prefetch_for_method(mname, session)
@@ -644,7 +644,7 @@ class DotModel(
 
         Используется для:
           - автоопределения `fields=` в update без явного списка;
-          - построения списка изменённых полей для `_fire_depends`
+          - построения списка изменённых полей для `_collect_depends`
             в delete / delete_bulk / create / create_bulk.
 
         Args:

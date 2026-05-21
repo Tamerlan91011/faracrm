@@ -343,7 +343,11 @@ class OrmRelationsMixin(_Base):
                 setattr(record, name, result if result else [])
 
     async def _update_relations(
-        self, payload: _M, update_fields: list[str], session=None
+        self,
+        payload: _M,
+        update_fields: list[str],
+        session=None,
+        collect=None,
     ):
         """
         Обновить запись с поддержкой relation полей (M2M, O2M, attachments).
@@ -377,7 +381,7 @@ class OrmRelationsMixin(_Base):
                         # Оборачиваем dict в объект модели
                         attachment_payload = field.relation_table(**field_obj)
                         attachment_id = await field.relation_table.create(
-                            payload=attachment_payload
+                            payload=attachment_payload, collect=collect
                         )
                         setattr(payload, name, attachment_id)
 
@@ -411,7 +415,9 @@ class OrmRelationsMixin(_Base):
                     }
                     record = await field.relation_table.search(**params)
                     if len(record):
-                        request_list.append(record[0].update(field_obj))
+                        request_list.append(
+                            record[0].update(field_obj, collect=collect)
+                        )
 
                 if isinstance(field, (One2many, PolymorphicOne2many)):
                     # заменить в связанных полях виртуальный ид на вновь созданный
@@ -435,12 +441,14 @@ class OrmRelationsMixin(_Base):
 
                     if field_obj.get("created", []):
                         request_list.append(
-                            field.relation_table.create_bulk(data_created)
+                            field.relation_table.create_bulk(
+                                data_created, collect=collect
+                            )
                         )
                     if field_obj.get("deleted", []):
                         request_list.append(
                             field.relation_table.delete_bulk(
-                                field_obj["deleted"]
+                                field_obj["deleted"], collect=collect
                             )
                         )
                     if field_obj.get("unselected", []):
@@ -448,7 +456,9 @@ class OrmRelationsMixin(_Base):
                         setattr(relation_obj, field.relation_table_field, None)
                         request_list.append(
                             field.relation_table.update_bulk(
-                                field_obj["unselected"], relation_obj
+                                field_obj["unselected"],
+                                relation_obj,
+                                collect=collect,
                             )
                         )
 
@@ -463,6 +473,7 @@ class OrmRelationsMixin(_Base):
                                 rec.update(
                                     field.relation_table(**changes),
                                     list(changes.keys()),
+                                    collect=collect,
                                 )
                             )
 
@@ -484,7 +495,7 @@ class OrmRelationsMixin(_Base):
 
                     if field_obj.get("created", []):
                         created_ids = await field.relation_table.create_bulk(
-                            data_created
+                            data_created, collect=collect
                         )
                         if "selected" not in field_obj:
                             field_obj["selected"] = []
