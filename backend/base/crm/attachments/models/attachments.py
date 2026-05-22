@@ -290,14 +290,16 @@ class Attachment(AuditMixin, DotModel):
             return None
 
     @hybridmethod
-    async def create(self, payload: Self, session=None, collect=None) -> int:
+    async def create(
+        self, payload: Self, session=None, depends_jobs=None
+    ) -> int:
         # Нет контента или это Binary-sentinel — обычный INSERT без FS
         if (
             not payload
             or not payload.content
             or isinstance(payload.content, Binary)
         ):
-            return await super().create(payload, session, collect)
+            return await super().create(payload, session, depends_jobs)
 
         async with env.apps.db.get_transaction():
             if not payload.size:
@@ -316,7 +318,7 @@ class Attachment(AuditMixin, DotModel):
 
             if not has_strategy(storage.type):
                 logger.warning("Strategy '%s' not found", storage.type)
-                return await super().create(payload, session, collect)
+                return await super().create(payload, session, depends_jobs)
 
             payload.storage_id = storage
             if route:
@@ -350,21 +352,21 @@ class Attachment(AuditMixin, DotModel):
                 storage.name,
             )
 
-            return await super().create(payload, session, collect)
+            return await super().create(payload, session, depends_jobs)
 
     async def update(
         self,
         payload: Self,
         fields: list | None = None,
         session=None,
-        collect=None,
+        depends_jobs=None,
     ) -> None:
         if (
             not payload.content
             or isinstance(payload.content, Binary)
             or isinstance(self.storage_id, int)
         ):
-            await super().update(payload, fields, session)
+            await super().update(payload, fields, session, depends_jobs)
             return
 
         async with env.apps.db.get_transaction():
@@ -385,11 +387,11 @@ class Attachment(AuditMixin, DotModel):
             if result.get("storage_file_url"):
                 payload.storage_file_url = result["storage_file_url"]
 
-            await super().update(payload, fields, session, collect)
+            await super().update(payload, fields, session, depends_jobs)
 
     @hybridmethod
     async def create_bulk(
-        self, payloads: list[Self], session=None, collect=None
+        self, payloads: list[Self], session=None, depends_jobs=None
     ):
         """
         Массовое создание вложений с сохранением файлов через стратегию.
@@ -428,7 +430,9 @@ class Attachment(AuditMixin, DotModel):
                     )
                 )
 
-            return await super().create_bulk(payloads, active_session, collect)
+            return await super().create_bulk(
+                payloads, active_session, depends_jobs
+            )
 
     async def _prepare_attachments(
         self, payloads: list[Self]
@@ -502,7 +506,7 @@ class Attachment(AuditMixin, DotModel):
         if result.get("storage_parent_name"):
             payload.storage_parent_name = result["storage_parent_name"]
 
-    async def delete(self, session=None, collect=None) -> bool:
+    async def delete(self, session=None, depends_jobs=None) -> bool:
         """
         Удалить вложение и файл из хранилища.
 
@@ -514,10 +518,12 @@ class Attachment(AuditMixin, DotModel):
         if self.storage_id and (self.storage_file_url or self.storage_file_id):
             await self._safe_delete_file()
 
-        return await super().delete(session, collect)
+        return await super().delete(session, depends_jobs)
 
     @hybridmethod
-    async def delete_bulk(self, ids: list[int], session=None, collect=None):
+    async def delete_bulk(
+        self, ids: list[int], session=None, depends_jobs=None
+    ):
         """
         Массовое удаление вложений с очисткой файлов в хранилище.
 
@@ -549,7 +555,7 @@ class Attachment(AuditMixin, DotModel):
             # _safe_delete_file, а bulk DELETE в БД всё равно выполнится.
             await asyncio.gather(*file_tasks)
 
-        return await super().delete_bulk(ids, session)
+        return await super().delete_bulk(ids, session, depends_jobs)
 
     async def _safe_delete_file(self) -> None:
         """Удалить файл в storage, логируя ошибки вместо их проброса."""

@@ -86,7 +86,7 @@ class AuditMixin(_Base):
         payload,
         fields=None,
         session=None,
-        collect=None,
+        depends_jobs=None,
     ):
         """
         Override DotModel.update — автоматически проставляет
@@ -106,4 +106,4 @@ class AuditMixin(_Base):
         if not payload.update_datetime:
             payload.update_datetime = _default_now()
 
-        return await super().update(payload, fields, session, collect)
+        return await super().update(payload, fields, session, depends_jobs)

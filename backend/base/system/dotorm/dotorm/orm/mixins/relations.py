@@ -347,7 +347,7 @@ class OrmRelationsMixin(_Base):
         payload: _M,
         update_fields: list[str],
         session=None,
-        collect=None,
+        depends_jobs=None,
     ):
         """
         Обновить запись с поддержкой relation полей (M2M, O2M, attachments).
@@ -381,7 +381,8 @@ class OrmRelationsMixin(_Base):
                         # Оборачиваем dict в объект модели
                         attachment_payload = field.relation_table(**field_obj)
                         attachment_id = await field.relation_table.create(
-                            payload=attachment_payload, collect=collect
+                            payload=attachment_payload,
+                            depends_jobs=depends_jobs,
                         )
                         setattr(payload, name, attachment_id)
 
@@ -416,7 +417,9 @@ class OrmRelationsMixin(_Base):
                     record = await field.relation_table.search(**params)
                     if len(record):
                         request_list.append(
-                            record[0].update(field_obj, collect=collect)
+                            record[0].update(
+                                field_obj, depends_jobs=depends_jobs
+                            )
                         )
 
                 if isinstance(field, (One2many, PolymorphicOne2many)):
@@ -442,13 +445,13 @@ class OrmRelationsMixin(_Base):
                     if field_obj.get("created", []):
                         request_list.append(
                             field.relation_table.create_bulk(
-                                data_created, collect=collect
+                                data_created, depends_jobs=depends_jobs
                             )
                         )
                     if field_obj.get("deleted", []):
                         request_list.append(
                             field.relation_table.delete_bulk(
-                                field_obj["deleted"], collect=collect
+                                field_obj["deleted"], depends_jobs=depends_jobs
                             )
                         )
                     if field_obj.get("unselected", []):
@@ -458,7 +461,7 @@ class OrmRelationsMixin(_Base):
                             field.relation_table.update_bulk(
                                 field_obj["unselected"],
                                 relation_obj,
-                                collect=collect,
+                                depends_jobs=depends_jobs,
                             )
                         )
 
@@ -473,7 +476,7 @@ class OrmRelationsMixin(_Base):
                                 rec.update(
                                     field.relation_table(**changes),
                                     list(changes.keys()),
-                                    collect=collect,
+                                    depends_jobs=depends_jobs,
                                 )
                             )
 
@@ -495,7 +498,7 @@ class OrmRelationsMixin(_Base):
 
                     if field_obj.get("created", []):
                         created_ids = await field.relation_table.create_bulk(
-                            data_created, collect=collect
+                            data_created, depends_jobs=depends_jobs
                         )
                         if "selected" not in field_obj:
                             field_obj["selected"] = []

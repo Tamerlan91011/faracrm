@@ -247,13 +247,15 @@ class ChatConnector(AuditMixin, DotModel):
             return {"contact_type_id": None}
 
     @hybridmethod
-    async def create(self, payload: Self, session=None, collect=None) -> int:
+    async def create(
+        self, payload: Self, session=None, depends_jobs=None
+    ) -> int:
         """
         Создание коннектора с автоматическим созданием ChatExternalAccount
         для назначенных операторов и outbox-аккаунта коннектора.
         """
         # Создаём коннектор (Many2many operator_ids заполнится автоматически)
-        self.id = await super().create(payload, session, collect)
+        self.id = await super().create(payload, session, depends_jobs)
 
         # Получаем операторов из Many2many таблицы
         new_operator_ids = await self._get_current_operator_ids()
@@ -273,7 +275,7 @@ class ChatConnector(AuditMixin, DotModel):
         payload,
         fields=None,
         session=None,
-        collect=None,
+        depends_jobs=None,
     ):
         """
         Обновление коннектора с синхронизацией Contact для операторов
@@ -290,7 +292,7 @@ class ChatConnector(AuditMixin, DotModel):
             old_operator_ids = await self._get_current_operator_ids()
 
         # Выполняем обновление (включая Many2many)
-        result = await super().update(payload, fields, session, collect)
+        result = await super().update(payload, fields, session, depends_jobs)
 
         # Синхронизируем Contact если были изменения операторов
         if has_operator_changes:
