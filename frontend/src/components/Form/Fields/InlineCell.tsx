@@ -30,6 +30,7 @@ import {
   BaseQueryFn,
   TypedUseQueryHookResult,
 } from '@reduxjs/toolkit/query/react';
+import classes from './InlineCell.module.css';
 
 interface InlineCellProps {
   /** Значение ячейки */
@@ -277,7 +278,7 @@ function InlineCellM2O({
         </InputBase>
       </Combobox.Target>
 
-      <Combobox.Dropdown>
+      <Combobox.Dropdown className={classes.m2oDropdown}>
         <Combobox.Search
           value={search}
           onChange={e => setSearch(e.currentTarget.value)}

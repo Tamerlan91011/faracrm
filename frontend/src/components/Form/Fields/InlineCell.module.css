@@ -1,0 +1,9 @@
+/* Ширина дропдауна инлайн-m2o не зависит от ширины ячейки грида:
+   растёт под самый длинный вариант в пределах min/max и не сжимается
+   до узкой колонки. `width: max-content !important` перебивает инлайн-ширину,
+   которую floating-ui проставляет из-за дефолтного Combobox width="target". */
+.m2oDropdown {
+  min-width: 150px;
+  width: max-content !important;
+  max-width: min(440px, 90vw);
+}
