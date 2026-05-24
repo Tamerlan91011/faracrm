@@ -350,17 +350,24 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
 
         # Если указан connector_id - отправляем во внешний сервис
         if body.connector_id:
-            connector = await env.models.chat_connector.get(body.connector_id)
-            if not connector or not connector.active:
+            connector = await env.models.chat_connector.search(
+                filter=[("id", "=", body.connector_id)],
+                fields_nested={"outbox_account_id": ["id", "external_id"]},
+                limit=1,
+            )
+            if not connector:
+                return False
+            connector = connector[0]
+            if not connector.active:
                 return False
 
             # Собираем recipients_ids - контакты партнёров чата,
             # которые подходят под тип коннектора
             # Используем contact_type_id коннектора (integer FK)
-            connector_contact_type_id = connector.contact_type_id
 
             recipients_ids = []
-            if connector_contact_type_id:
+            if connector.contact_type_id:
+                connector_contact_type_id = connector.contact_type_id.id
                 # Находим контакты партнёров-участников чата
                 session = env.apps.db.get_session()
                 recipients_query = """
@@ -374,7 +381,7 @@ async def post_message(req: Request, chat_id: int, body: MessageCreate):
                       AND cm.is_active = true
                 """
                 recipients_raw = await session.execute(
-                    recipients_query, (connector_contact_type_id.id, chat_id)
+                    recipients_query, (connector_contact_type_id, chat_id)
                 )
                 recipients_ids = [
                     {"id": r["id"], "contact_value": r["contact_value"]}

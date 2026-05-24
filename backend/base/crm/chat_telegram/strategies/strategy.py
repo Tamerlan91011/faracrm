@@ -292,7 +292,7 @@ class TelegramStrategy(ChatStrategyBase):
 
     async def file_download(
         self, connector: "ChatConnector", file_info: dict | str
-    ) -> bytes:
+    ) -> tuple[bytes, str]:
         """
         Скачать файл из Telegram.
 
@@ -325,7 +325,15 @@ class TelegramStrategy(ChatStrategyBase):
                 raise ValueError(
                     f"Failed to download file: HTTP {response.status_code}"
                 )
-            return response.content
+            # Получаем MIME-тип и очищаем его от возможных параметров вроде charset=utf-8
+            content_type = response.headers.get("content-type", "")
+            mime_type = (
+                content_type.split(";")[0].strip()
+                if content_type
+                else "unknown"
+            )
+
+            return response.content, mime_type
 
     def create_message_adapter(
         self, connector: "ChatConnector", raw_message: dict

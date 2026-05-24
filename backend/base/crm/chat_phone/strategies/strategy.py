@@ -458,7 +458,8 @@ class PhoneStrategyBase(ChatStrategyBase):
         if not url:
             return None
 
-        return await self.file_download(connector, url)
+        content, mymetype = await self.file_download(connector, url)
+        return content
 
     async def _create_completed_call(
         self,

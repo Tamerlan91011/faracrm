@@ -189,6 +189,7 @@ from backend.base.crm.chat_web_push.app import ChatWebPushApp
 from backend.base.crm.chat_phone.app import ChatPhoneApp
 from backend.base.crm.chat_phone_sipuni.app import ChatPhoneSipuniApp
 from backend.base.crm.chat_phone_megafon.app import ChatPhoneMegafonApp
+from backend.base.crm.chat_avito.app import ChatAvitoApp
 from backend.base.crm.tasks.app import TasksApp
 from backend.base.crm.activity.app import ActivityApp
 from backend.base.crm.report_docx.app import ReportDocxApp
@@ -309,6 +310,7 @@ class Apps(AppsCore):
     chat_phone_sipune = ChatPhoneSipuniApp()
     chat_phone_megafon = ChatPhoneMegafonApp()
     chat_web_push = ChatWebPushApp()
+    chat_avito = ChatAvitoApp()
     task = TasksApp()
     activity = ActivityApp()
     report_docx = ReportDocxApp()

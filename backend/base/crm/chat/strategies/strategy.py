@@ -6,8 +6,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Tuple
 import json
 import logging
+import mimetypes
 
 from backend.base.crm.users.models.users import User
+from backend.base.system.core.enviroment import env
 
 if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
@@ -88,7 +90,7 @@ class ChatStrategyBase(ABC):
     async def chat_send_message(
         self,
         connector: "ChatConnector",
-        user_from: "Contact",
+        user_from: "ChatExternalAccount",
         body: str,
         chat_id: str | None = None,
         recipients_ids: list | None = None,
@@ -475,36 +477,77 @@ class ChatStrategyBase(ABC):
         message,
     ) -> None:
         """Обработать вложения (изображения, файлы)."""
-        for image_url in adapter.images:
-            try:
-                image_content = await self.file_download(connector, image_url)
-                # TODO: Интеграция с модулем attachments
-                logger.debug(
-                    "[%s] Downloaded image: %s bytes",
-                    self.strategy_type,
-                    len(image_content),
-                )
-            except Exception as e:
-                logger.error(
-                    "[%s] Error downloading image: %s", self.strategy_type, e
-                )
+        logger.info(
+            "Process attachments: %s, %s, %s",
+            adapter,
+            adapter.images,
+            adapter.files,
+        )
+        attachments_content = []
+        if adapter.images:
+            for image_url in adapter.images:
+                try:
+                    image_content, mimetype = await self.file_download(
+                        connector, image_url
+                    )
+                    attachments_content.append((image_content, mimetype))
+                    # TODO: Интеграция с модулем attachments
+                    logger.debug(
+                        "[%s] Downloaded image: %s bytes",
+                        self.strategy_type,
+                        len(image_content),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "[%s] Error downloading image: %s",
+                        self.strategy_type,
+                        e,
+                    )
 
-        for file_info in adapter.files:
-            try:
-                file_content = await self.file_download(
-                    connector, file_info.get("url", "")
-                )
-                # TODO: Интеграция с модулем attachments
-                logger.debug(
-                    "[%s] Downloaded file: %s (%s bytes)",
-                    self.strategy_type,
-                    file_info.get("name"),
-                    len(file_content),
-                )
-            except Exception as e:
-                logger.error(
-                    "[%s] Error downloading file: %s", self.strategy_type, e
-                )
+        if adapter.files:
+            for file_info in adapter.files:
+                try:
+                    file_content, mimetype = await self.file_download(
+                        connector, file_info.get("url", "")
+                    )
+                    attachments_content.append((file_content, mimetype))
+                    # TODO: Интеграция с модулем attachments
+                    logger.debug(
+                        "[%s] Downloaded file: %s (%s bytes)",
+                        self.strategy_type,
+                        file_info.get("name"),
+                        len(file_content),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "[%s] Error downloading file: %s",
+                        self.strategy_type,
+                        e,
+                    )
+        attachments: list["Attachment"] = []
+        logger.info(
+            "Process attachments_content end: %s",
+            attachments_content,
+        )
+        for content, mimetype in attachments_content:
+            # Получаем правильное расширение для файла (например, '.jpg' для 'image/jpeg')
+            ext = mimetypes.guess_extension(mimetype) or ""
+            attachment: "Attachment" = env.models.attachment(
+                name=f"{self.strategy_type}_{message.id}{ext}",
+                mimetype=mimetype,
+                size=len(content),
+                content=content,
+                res_model="chat_message",
+                res_id=message.id,
+            )
+            attachments.append(attachment)
+
+        logger.info(
+            "Process attachments end: %s",
+            attachments,
+        )
+        if attachments:
+            await env.models.attachment.create_bulk(attachments)
 
     # Лидогенерация
     async def _fetch_item_info(
@@ -754,7 +797,7 @@ class ChatStrategyBase(ABC):
     async def chat_send_message_binary(
         self,
         connector: "ChatConnector",
-        user_from: "Contact",
+        user_from: "ChatExternalAccount",
         chat_id: str,
         attachment: Any,
         recipients_ids: list | None = None,
@@ -778,7 +821,7 @@ class ChatStrategyBase(ABC):
 
     async def file_download(
         self, connector: "ChatConnector", file_url: str
-    ) -> bytes:
+    ) -> tuple[bytes, str]:
         """
         Скачать файл по URL.
 
@@ -793,7 +836,16 @@ class ChatStrategyBase(ABC):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(file_url)
-            return response.content
+            # Получаем MIME-тип и очищаем его от возможных параметров вроде charset=utf-8
+            content_type = response.headers.get("content-type", "")
+            mime_type = (
+                content_type.split(";")[0].strip()
+                if content_type
+                else "unknown"
+            )
+
+            # Теперь у вас есть доступ и к mime_type, и к response.content
+            return response.content, mime_type
 
     async def get_partner_name(
         self, connector: "ChatConnector", user_id: str
@@ -899,81 +951,83 @@ class ChatStrategyBase(ABC):
                 return False
 
             # Находим контакт оператора по contact_type_id коннектора
-            operator_ct_id = connector_id.contact_type_id
-            if operator_ct_id is None:
-                raise ValueError("Contact type must be set")
+            # operator_ct_id = connector_id.contact_type_id
+            # if operator_ct_id is None:
+            #     raise ValueError("Contact type must be set")
 
-            operator_contact = await env.models.contact.search(
-                filter=[
-                    ("contact_type_id", "=", operator_ct_id.id),
-                    ("user_id", "=", user_id),
-                    ("active", "=", True),
-                ],
-                limit=1,
-            )
+            # operator_contact = await env.models.contact.search(
+            #     filter=[
+            #         ("contact_type_id", "=", operator_ct_id),
+            #         ("user_id", "=", user_id),
+            #         ("active", "=", True),
+            #     ],
+            #     fields_nested={"external_account_ids": ["id"]},
+            #     limit=1,
+            # )
 
-            if not operator_contact:
-                logger.warning(
-                    "No operator contact found for connector %s, user %s",
-                    connector_id.id,
-                    user_id,
+            # if not operator_contact:
+            #     logger.warning(
+            #         "No operator contact found for connector %s, user %s",
+            #         connector_id.id,
+            #         user_id,
+            #     )
+            #     return False
+
+            if connector_id.outbox_account_id:
+                external_msg_id = None
+
+                # Отправляем вложения
+                if attachments:
+                    for att in attachments:
+                        try:
+                            # Получаем содержимое вложения из БД
+                            # attachment = await env.models.attachment.get(att["id"])
+                            # if not attachment:
+                            #     continue
+                            file_msg_id = await self.chat_send_message_binary(
+                                connector_id,
+                                connector_id.outbox_account_id,
+                                external_chat_id,
+                                att,
+                            )
+
+                            if file_msg_id and not external_msg_id:
+                                external_msg_id = file_msg_id
+
+                        except Exception as e:
+                            logger.error(
+                                "Failed to send attachment %s: %s",
+                                att.get("id"),
+                                e,
+                            )
+
+                # Если нет вложений или есть текст без caption — отправляем текст
+                if body.strip():
+                    text_msg_id, _ = await self.chat_send_message(
+                        connector=connector_id,
+                        user_from=connector_id.outbox_account_id,
+                        body=body,
+                        chat_id=external_chat_id,
+                    )
+                    if text_msg_id:
+                        external_msg_id = text_msg_id
+
+                # Сохраняем связь с внешним сообщением
+                if external_msg_id:
+                    await env.models.chat_external_message.create_link(
+                        external_id=str(external_msg_id),
+                        connector_id=connector_id.id,
+                        message_id=message_id,
+                        external_chat_id=external_chat_id,
+                    )
+
+                logger.info(
+                    "Sent message to %s: internal=%s, external=%s",
+                    connector_id.type,
+                    message_id,
+                    external_msg_id,
                 )
-                return False
-
-            external_msg_id = None
-
-            # Отправляем вложения
-            if attachments:
-                for att in attachments:
-                    try:
-                        # Получаем содержимое вложения из БД
-                        # attachment = await env.models.attachment.get(att["id"])
-                        # if not attachment:
-                        #     continue
-                        file_msg_id = await self.chat_send_message_binary(
-                            connector_id,
-                            operator_contact[0],
-                            external_chat_id,
-                            att,
-                        )
-
-                        if file_msg_id and not external_msg_id:
-                            external_msg_id = file_msg_id
-
-                    except Exception as e:
-                        logger.error(
-                            "Failed to send attachment %s: %s",
-                            att.get("id"),
-                            e,
-                        )
-
-            # Если нет вложений или есть текст без caption — отправляем текст
-            if body.strip():
-                text_msg_id, _ = await self.chat_send_message(
-                    connector=connector_id,
-                    user_from=operator_contact[0],
-                    body=body,
-                    chat_id=external_chat_id,
-                )
-                if text_msg_id:
-                    external_msg_id = text_msg_id
-
-            # Сохраняем связь с внешним сообщением
-            if external_msg_id:
-                await env.models.chat_external_message.create_link(
-                    external_id=str(external_msg_id),
-                    connector_id=connector_id.id,
-                    message_id=message_id,
-                    external_chat_id=external_chat_id,
-                )
-
-            logger.info(
-                "Sent message to %s: internal=%s, external=%s",
-                connector_id.type,
-                message_id,
-                external_msg_id,
-            )
-            return True
+                return True
 
         except Exception as e:
             logger.error(

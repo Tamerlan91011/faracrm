@@ -357,7 +357,7 @@ class WhatsAppChatAppStrategy(ChatStrategyBase):
 
     async def file_download(
         self, connector: "ChatConnector", file_info: dict | str
-    ) -> bytes:
+    ) -> tuple[bytes, str]:
         """
         Скачать файл.
 
@@ -386,7 +386,15 @@ class WhatsAppChatAppStrategy(ChatStrategyBase):
                     f"Failed to download file: HTTP {response.status_code}"
                 )
 
-            return response.content
+            # Получаем MIME-тип и очищаем его от возможных параметров вроде charset=utf-8
+            content_type = response.headers.get("content-type", "")
+            mime_type = (
+                content_type.split(";")[0].strip()
+                if content_type
+                else "unknown"
+            )
+
+            return response.content, mime_type
 
     async def get_licenses(self, connector: "ChatConnector") -> dict:
         """

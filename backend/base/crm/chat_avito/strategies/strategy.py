@@ -222,6 +222,8 @@ class AvitoStrategy(ChatStrategyBase):
             raise ValueError("Cannot send Avito message without chat_id")
 
         # user_from.external_id содержит ID аккаунта Avito
+        # user_id = user_from.external_id
+        # TODO: подумать над рефакторингом
         user_id = user_from.external_id
 
         url = (
@@ -379,32 +381,32 @@ class AvitoStrategy(ChatStrategyBase):
 
             raise ValueError("No image_id in Avito uploadImage response")
 
-    async def file_download(
-        self, connector: "ChatConnector", file_url: str | dict
-    ) -> bytes:
-        """
-        Скачать файл из Avito.
+    # async def file_download(
+    #     self, connector: "ChatConnector", file_url: str | dict
+    # ) -> bytes:
+    #     """
+    #     Скачать файл из Avito.
 
-        Avito предоставляет готовые URL для скачивания.
+    #     Avito предоставляет готовые URL для скачивания.
 
-        Args:
-            connector: Коннектор
-            file_url: URL файла (строка или словарь с URL)
+    #     Args:
+    #         connector: Коннектор
+    #         file_url: URL файла (строка или словарь с URL)
 
-        Returns:
-            Содержимое файла в байтах
-        """
-        url = file_url if isinstance(file_url, str) else str(file_url)
+    #     Returns:
+    #         Содержимое файла в байтах
+    #     """
+    #     url = file_url if isinstance(file_url, str) else str(file_url)
 
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(url)
+    #     async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+    #         response = await client.get(url)
 
-            if response.status_code != 200:
-                raise ValueError(
-                    f"Failed to download Avito file: HTTP {response.status_code}"
-                )
+    #         if response.status_code != 200:
+    #             raise ValueError(
+    #                 f"Failed to download Avito file: HTTP {response.status_code}"
+    #             )
 
-            return response.content
+    #         return response.content
 
     async def _get_chat_info(
         self,

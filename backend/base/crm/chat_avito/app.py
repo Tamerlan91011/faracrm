@@ -25,4 +25,4 @@ class ChatAvitoApp(App):
         from backend.base.crm.chat.strategies import register_strategy
         from .strategies import AvitoStrategy
 
-        register_strategy.register(AvitoStrategy)
+        register_strategy(AvitoStrategy)
