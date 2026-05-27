@@ -17,6 +17,7 @@ if TYPE_CHECKING:
         ChatExternalAccount,
     )
     from backend.base.crm.attachments.models.attachments import Attachment
+    from backend.base.crm.chat.strategies.adapter import ChatMessageAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +414,7 @@ class AvitoStrategy(ChatStrategyBase):
         connector: "ChatConnector",
         user_id: str,
         chat_id: str | None = None,
-    ) -> str | None:
+    ):
         """
         Получить имя клиента из чата.
 
@@ -502,6 +503,31 @@ class AvitoStrategy(ChatStrategyBase):
                     return users[0].get("name")
 
             return None
+
+    async def resolve_partner_name(
+        self,
+        connector: "ChatConnector",
+        adapter: "ChatMessageAdapter",
+    ) -> str | None:
+        """Avito не присылает имя клиента в webhook
+        Тянем имя одним вызовом
+        """
+
+        user_id = adapter.user_id
+        chat_id = adapter.chat_id
+        partner_name = adapter.author_id or None
+        try:
+            info = await self._get_chat_info(connector, user_id, chat_id) or {}
+            users = info.get("users") or []
+            partner_name = users[0].get("name")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Avito: failed to resolve partner name for chat %s: %s",
+                chat_id,
+                exc,
+            )
+
+        return partner_name
 
     async def get_self_account_id(self, connector: "ChatConnector") -> dict:
         """

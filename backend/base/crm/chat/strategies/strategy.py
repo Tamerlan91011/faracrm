@@ -260,16 +260,24 @@ class ChatStrategyBase(ABC):
         7. Отправить через WebSocket
         """
 
-        # 1. Найти или создать ExternalAccount + Contact
+        resolved_partner_name = await self.resolve_partner_name(
+            connector, adapter
+        )
+
+        # 1. Найти или создать ExternalAccount + Contact (+ Partner если новый)
         external_account, contact, created = (
             await env.models.chat_external_account.find_or_create_for_webhook(
                 connector=connector,
                 external_id=adapter.author_id,
                 contact_value=adapter.author_id,  # email / phone / username
-                display_name=adapter.author_name,
+                display_name=resolved_partner_name,
                 raw=json.dumps(adapter.raw) if adapter.raw else None,
             )
         )
+
+        if not contact.partner_id:
+            raise ValueError("Partner not found for contact")
+        partner_name = contact.partner_id.name
 
         # 2. Найти или создать связь с внешним чатом
         external_chat = (
@@ -285,7 +293,11 @@ class ChatStrategyBase(ABC):
         else:
             # Создаём новый внутренний чат и внешний чат
             chat_id = await self._create_new_chat(
-                env, connector, adapter, external_account
+                env,
+                connector,
+                adapter,
+                external_account,
+                partner_name=partner_name,
             )
             if chat_id is None:
                 return
@@ -359,7 +371,7 @@ class ChatStrategyBase(ABC):
         # 8. Отправляем уведомление через WebSocket
         author_data = {
             "id": author_user_id or author_partner_id,
-            "name": adapter.author_name,
+            "name": partner_name or adapter.author_name,
             "type": "user" if author_user_id else "partner",
         }
 
@@ -398,8 +410,15 @@ class ChatStrategyBase(ABC):
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
         external_account: "ChatExternalAccount",
+        partner_name: str | None = None,
     ) -> int | None:
-        """Создать новый чат для входящего сообщения."""
+        """Создать новый чат для входящего сообщения.
+
+        ``partner_name`` — каноническое имя партнёра (как лежит в БД после
+        ``find_or_create_for_webhook``). Используется как основа для
+        ``chat.name``. Если не передано — фолбэк на ``adapter.author_name`` /
+        ``adapter.author_id`` (обратная совместимость).
+        """
         # Находим оператора для назначения (теперь через connector)
         operator_id = await connector.get_next_operator()
 
@@ -413,9 +432,8 @@ class ChatStrategyBase(ABC):
 
         # Создаём чат
         # is_internal=False т.к. это внешний чат (от коннектора)
-        chat_name = (
-            f"{adapter.author_name or adapter.author_id} ({connector.name})"
-        )
+        author_label = partner_name or adapter.author_name or adapter.author_id
+        chat_name = f"{author_label} ({connector.name})"
 
         now = datetime.now(timezone.utc)
         chat = env.models.chat(
@@ -1034,3 +1052,14 @@ class ChatStrategyBase(ABC):
                 "Failed to send to external connector: %s", e, exc_info=True
             )
             return False
+
+    async def resolve_partner_name(
+        self,
+        connector: "ChatConnector",
+        adapter: "ChatMessageAdapter",
+    ) -> str | None:
+        """Хук: вернуть человекочитаемое имя партнёра (клиента) по входящему
+        сообщению.
+
+        """
+        return adapter.author_name

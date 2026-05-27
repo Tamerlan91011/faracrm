@@ -193,6 +193,7 @@ class ChatExternalAccount(AuditMixin, DotModel):
             contacts = await env.models.contact.search(
                 filter=[("id", "=", existing.contact_id.id)],
                 fields=["id", "name", "user_id", "partner_id"],
+                fields_nested={"partner_id": ["id", "name"]},
                 limit=1,
             )
             return existing, contacts[0], False

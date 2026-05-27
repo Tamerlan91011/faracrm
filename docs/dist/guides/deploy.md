@@ -20,7 +20,7 @@ docker compose up -d
 
 # 4. Настраиваем окружение proxy-стека
 cd deploy/proxy
-cp .env.sample .env
+cp .env.example .env
 nano .env       # DOMAIN, EMAIL, FARA_NETWORK
 
 # 5. Деплой proxy: SSL-сертификат + nginx-конфиг

@@ -102,7 +102,7 @@ docker network ls | grep default
 
 ```bash
 cd deploy/proxy
-cp .env.sample .env
+cp .env.example .env
 nano .env
 ```
 
@@ -220,7 +220,7 @@ tar czf certbot-backup-$(date +%F).tar.gz deploy/proxy/certbot/conf/
 Скопируй образец и заполни:
 
 ```bash
-cd deploy/proxy && cp .env.sample .env && nano .env
+cd deploy/proxy && cp .env.example .env && nano .env
 ```
 
 ### `Сеть faracrm_default не найдена`

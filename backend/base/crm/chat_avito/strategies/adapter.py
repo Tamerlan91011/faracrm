@@ -60,16 +60,6 @@ class AvitoMessageAdapter(ChatMessageAdapter):
         """ID отправителя сообщения."""
         return str(self._payload.get("author_id", ""))
 
-    def user_id(self):
-        """
-        ID пользователя-получателя (владелец webhook).
-        Это аккаунт на который зарегистрирован webhook.
-        """
-        # external_account_id настроен на коннекторе — это надёжнее, чем
-        # тащить значение из payload.
-        return self.connector.external_account_id
-        # return str(self._payload.get("user_id", ""))
-
     # @property
     # def type(self) -> str:
     #     """Тип сообщения
