@@ -21,6 +21,7 @@ from backend.base.crm.users.audit_mixin import AuditMixin
 if TYPE_CHECKING:
     from backend.base.crm.partners.models.partners import Partner
     from backend.base.crm.company.models.company import Company
+    from backend.base.crm.sales.models.sale import Sale
 
 
 class Contract(AuditMixin, DotModel):
@@ -79,7 +80,7 @@ class Contract(AuditMixin, DotModel):
     notes: str | None = Text(string="Notes")
 
     # Связь с заказами
-    sale_ids: list = One2many(
+    sale_ids: list["Sale"] = One2many(
         lambda: env.models.sale,
         "contract_id",
         string="Sales Orders",

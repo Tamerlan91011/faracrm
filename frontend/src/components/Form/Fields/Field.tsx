@@ -20,6 +20,7 @@ import { FieldPolymorphicOne2many } from './FieldPolymorphicOne2many';
 import { FieldSelection } from './FieldSelection';
 import { FieldContacts } from '@/components/ContactsWidget';
 import { FieldColor } from './FieldColor';
+import { FieldX2mButton } from './FieldX2mButton';
 // import { FaraRecord } from '@/services/api/crudTypes';
 
 export const Field = ({ name, ...props }: { name: string }) => <></>;
@@ -52,4 +53,5 @@ export const FieldComponents: Record<
   FieldSelection,
   FieldContacts, // Кастомный виджет для контактов
   FieldColor,
+  FieldX2mButton,
 };

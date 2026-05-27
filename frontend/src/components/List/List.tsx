@@ -9,8 +9,8 @@ import {
   BaseQueryFn,
   TypedUseQueryHookResult,
 } from '@reduxjs/toolkit/query/react';
-import { Children, isValidElement, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Children, isValidElement, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useSearchQuery } from '@/services/api/crudApi';
 import {
   FaraRecord,
@@ -48,13 +48,26 @@ export const List = <RecordType extends FaraRecord>({
   ...props
 }: ListProps<RecordType>) => {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // Получаем фильтры из контекста
   const contextFilters = useFilters();
 
-  // Объединяем фильтры из props и контекста
+  // X2m-button навигация передаёт фильтр через location.state.initialFilter
+  // (см. FieldX2mButton). Используем его как мягкий префильтр поверх
+  // props.filter / контекстных фильтров. Стейб привязан к history-entry,
+  // так что после refetch / refresh страницы он не исчезает (state
+  // персистится в history). Жёсткий reload (F5) сбросит
+  const stateFilter: FilterExpression = useMemo(() => {
+    const raw = (location.state as { initialFilter?: FilterExpression } | null)
+      ?.initialFilter;
+    return Array.isArray(raw) ? raw : [];
+  }, [location.state]);
+
+  // Объединяем фильтры из props, state и контекста
   const combinedFilters: FilterExpression = [
     ...(props.filter || []),
+    ...stateFilter,
     ...contextFilters,
   ];
 

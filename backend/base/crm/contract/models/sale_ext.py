@@ -18,11 +18,14 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from backend.base.system.core.extensions import extend
+from backend.base.system.core.enviroment import env
+from backend.base.system.dotorm.dotorm.fields import Many2one
 from backend.base.crm.sales.models.sale import Sale
 
 if TYPE_CHECKING:
     _Base = Sale
     from backend.base.system.core.enviroment import Environment
+    from backend.base.crm.contract.models.contract import Contract
 else:
     _Base = object
 
@@ -95,8 +98,17 @@ def _ru_date(date_str: str | None) -> str:
 class SaleContractMixin(_Base):
     """
     Расширение Sale для модуля contract.
-    Добавляет методы подготовки данных для отчётов.
+
+    Добавляет:
+    - contract_id — обратная сторона Contract.sale_ids (One2many).
+    - Методы подготовки данных для отчётов.
     """
+
+    contract_id: "Contract | None" = Many2one(
+        lambda: env.models.contract,
+        string="Договор",
+        index=True,
+    )
 
     @staticmethod
     async def sale_invoice_rus(env: "Environment", record_id: int) -> dict:

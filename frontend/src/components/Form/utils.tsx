@@ -79,6 +79,13 @@ export const getChildrenRecursive = (
         if (child.props.avatar) {
           processChildren(child.props.avatar);
         }
+        // И actions — правый верхний слот FormHeader. Без этого
+        // поля внутри actions не попадут в fieldsList → backend
+        // не вернёт metadata → компонент (напр. FieldX2mButton)
+        // не отрисуется.
+        if (child.props.actions) {
+          processChildren(child.props.actions);
+        }
         return;
       }
 
@@ -125,6 +132,15 @@ export const getComponentsFromChildren = (
           const avatarChildren = processChildren(child.props.avatar);
           newProps.avatar =
             avatarChildren.length === 1 ? avatarChildren[0] : avatarChildren;
+        }
+
+        // Для FormHeader (и в перспективе других layout'ов) обрабатываем
+        // actions slot — правый верхний угол шапки. Без этого <Field>
+        // внутри actions остался бы пустым маркером (см. Field.tsx).
+        if (child.props.actions) {
+          const actionsChildren = processChildren(child.props.actions);
+          newProps.actions =
+            actionsChildren.length === 1 ? actionsChildren[0] : actionsChildren;
         }
 
         result.push(cloneElement(child, newProps));

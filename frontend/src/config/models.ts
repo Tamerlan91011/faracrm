@@ -229,6 +229,7 @@ export const modelsConfig: Record<string, ModelConfig> = {
       import('@/fara_sales/Form').then(m => ({ default: m.ViewFormSales })),
     kanban: () =>
       import('@/fara_sales/Kanban').then(m => ({ default: m.ViewKanbanSales })),
+    extensions: [() => import('@/fara_contract')],
   },
   sale_stage: {
     menu: MenuGroups.sales,

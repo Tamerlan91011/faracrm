@@ -91,12 +91,13 @@ def dotorm_to_pydantic_nested_one(cls):
             if getattr(field, "private", False):
                 continue
 
-            if not isinstance(field, (Many2many, One2many)):
-                fields_store.append(field_name)
+            fields_store.append(field_name)
 
-            else:
-                # если это поле множественной связи m2m или o2m
-                # то это поле будет содержать просто список своих полей
+            if isinstance(field, (Many2many, One2many)):
+                # Дополнительно — schema для dict-формы
+                # {field_name: [nested_field, ...]}, чтобы клиент мог
+                # запросить вложенные поля связанной модели одним
+                # запросом.
                 allowed_fields = [
                     fname
                     for fname, fobj in field.relation_table.get_all_fields().items()
