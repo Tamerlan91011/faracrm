@@ -24,6 +24,7 @@ cp .env.example .env
 nano .env       # DOMAIN, EMAIL, FARA_NETWORK
 
 # 5. Деплой proxy: SSL-сертификат + nginx-конфиг
+chmod +x deploy.sh
 ./deploy.sh
 ```
 
