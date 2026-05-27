@@ -8,6 +8,7 @@ import {
   IconChevronDown,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 
 interface ConnectorSwitcherProps {
   connectors: ChatConnectorDetail[];
@@ -16,11 +17,26 @@ interface ConnectorSwitcherProps {
   disabled?: boolean;
 }
 
+// SVG-логотип Avito отдаётся как URL (project resolves *.svg в строку),
+// поэтому рендерим через <img>. Размер совпадает с tabler-иконками (16px);
+// draggable=false чтобы внутри Menu.Item иконка не «отрывалась» при drag.
+const AvitoIcon = () => (
+  <img
+    src={avitoIconUrl}
+    width={16}
+    height={16}
+    alt="Avito"
+    draggable={false}
+    style={{ display: 'block' }}
+  />
+);
+
 const connectorIcons: Record<string, React.ReactNode> = {
   internal: <IconMessage size={16} />,
   telegram: <IconBrandTelegram size={16} />,
   whatsapp: <IconBrandWhatsapp size={16} />,
   email: <IconMail size={16} />,
+  avito: <AvitoIcon />,
 };
 
 const connectorColors: Record<string, string> = {
@@ -28,6 +44,7 @@ const connectorColors: Record<string, string> = {
   telegram: 'blue',
   whatsapp: 'green',
   email: 'orange',
+  avito: 'lime',
 };
 
 export function ConnectorSwitcher({

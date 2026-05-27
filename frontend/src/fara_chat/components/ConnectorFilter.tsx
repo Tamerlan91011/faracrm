@@ -6,6 +6,7 @@ import {
   IconApps,
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
+import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 
 interface ConnectorFilterProps {
   value: string;
@@ -13,12 +14,26 @@ interface ConnectorFilterProps {
   availableTypes?: string[];
 }
 
+// SVG-логотип Avito (project resolves *.svg в URL), оборачиваем в <img>
+// чтобы вставить в тот же слот, где используются tabler-иконки.
+const AvitoIcon = () => (
+  <img
+    src={avitoIconUrl}
+    width={16}
+    height={16}
+    alt="Avito"
+    draggable={false}
+    style={{ display: 'block' }}
+  />
+);
+
 // Иконки для типов коннекторов
 const connectorIcons: Record<string, React.ReactNode> = {
   all: <IconApps size={16} />,
   internal: <IconMessage size={16} />,
   telegram: <IconBrandTelegram size={16} />,
   whatsapp: <IconBrandWhatsapp size={16} />,
+  avito: <AvitoIcon />,
 };
 
 // Названия типов коннекторов
@@ -27,6 +42,7 @@ const connectorLabels: Record<string, string> = {
   internal: 'internal',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
+  avito: 'Avito',
 };
 
 export function ConnectorFilter({
@@ -49,7 +65,9 @@ export function ConnectorFilter({
                 ? 'blue'
                 : type === 'whatsapp'
                   ? 'green'
-                  : 'gray'
+                  : type === 'avito'
+                    ? 'lime'
+                    : 'gray'
             }>
             {connectorIcons[type] || <IconApps size={16} />}
           </ThemeIcon>
