@@ -3,9 +3,13 @@ import { Text, Group, Stack, ScrollArea, Tooltip, Box, SegmentedControl, ActionI
 import { IconPlus, IconCalendarEvent } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useSearchQuery } from '@/services/api/crudApi';
-import { FaraRecord, GetListParams, GetListResult } from '@/services/api/crudTypes';
-import { useFilters } from '@/components/SearchFilter/FilterContext';
+import {
+  FaraRecord,
+  GetListParams,
+  GetListResult,
+  FilterExpression,
+} from '@/services/api/crudTypes';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import {
   BaseQueryFn,
   TypedUseQueryHookResult,
@@ -33,6 +37,8 @@ export interface GanttProps<T extends FaraRecord> {
   // Сортировка
   sort?: keyof T & string;
   order?: 'asc' | 'desc';
+  /** Жёсткий префильтр от родителя (комбинируется с общим фильтром вью). */
+  filter?: FilterExpression;
 }
 
 interface GanttBar {
@@ -175,6 +181,7 @@ export function Gantt<T extends FaraRecord>({
   defaultScale = 'day',
   sort,
   order = 'asc',
+  filter,
 }: GanttProps<T>) {
   const navigate = useNavigate();
   const { t } = useTranslation('common');
@@ -196,16 +203,14 @@ export function Gantt<T extends FaraRecord>({
     return Array.from(allFields);
   }, [fields, startField, endField, dateField, durationField, labelField, colorField, sort]);
 
-  // Загрузка данных
-  const contextFilters = useFilters();
-
-  const { data: recordsData } = useSearchQuery({
+  // Загрузка данных (общий фильтр вью подмешивает useFilteredSearchQuery)
+  const { data: recordsData } = useFilteredSearchQuery({
     model,
     fields: queryFields,
     limit: 500,
     order: order,
     sort: sort || startField || dateField || 'id',
-    filter: contextFilters,
+    filter,
   }) as TypedUseQueryHookResult<GetListResult<T>, GetListParams, BaseQueryFn>;
 
   const records = recordsData?.data || [];

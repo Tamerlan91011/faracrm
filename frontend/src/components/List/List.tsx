@@ -9,16 +9,15 @@ import {
   BaseQueryFn,
   TypedUseQueryHookResult,
 } from '@reduxjs/toolkit/query/react';
-import { Children, isValidElement, useEffect, useMemo, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { useSearchQuery } from '@/services/api/crudApi';
+import { Children, isValidElement, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   FaraRecord,
   GetListParams,
   GetListResult,
-  FilterExpression,
 } from '@/services/api/crudTypes';
 import { useFilters } from '@/components/SearchFilter/FilterContext';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import { BooleanCell } from '@/components/ListCells';
 import { Field } from './Field';
 import { Toolbar } from './Toolbar';
@@ -48,28 +47,12 @@ export const List = <RecordType extends FaraRecord>({
   ...props
 }: ListProps<RecordType>) => {
   const navigate = useNavigate();
-  const location = useLocation();
 
-  // Получаем фильтры из контекста
+  // Общий фильтр вью из FilterContext. Здесь он нужен только для сброса
+  // страницы при его изменении (см. эффект ниже). В сам запрос его —
+  // вместе с props.filter и stateFilter x2m-навигации — подмешивает
+  // useFilteredSearchQuery.
   const contextFilters = useFilters();
-
-  // X2m-button навигация передаёт фильтр через location.state.initialFilter
-  // (см. FieldX2mButton). Используем его как мягкий префильтр поверх
-  // props.filter / контекстных фильтров. Стейб привязан к history-entry,
-  // так что после refetch / refresh страницы он не исчезает (state
-  // персистится в history). Жёсткий reload (F5) сбросит
-  const stateFilter: FilterExpression = useMemo(() => {
-    const raw = (location.state as { initialFilter?: FilterExpression } | null)
-      ?.initialFilter;
-    return Array.isArray(raw) ? raw : [];
-  }, [location.state]);
-
-  // Объединяем фильтры из props, state и контекста
-  const combinedFilters: FilterExpression = [
-    ...(props.filter || []),
-    ...stateFilter,
-    ...contextFilters,
-  ];
 
   // Debug
   // console.log('List filters:', {
@@ -172,14 +155,15 @@ export const List = <RecordType extends FaraRecord>({
     }
   });
 
-  const { data, refetch } = useSearchQuery({
+  const { data, refetch } = useFilteredSearchQuery({
     ...props,
     start: (page - 1) * pageSize,
     end: (page - 1) * pageSize + pageSize,
     sort: (sortStatus?.columnAccessor as string) || props.sort || 'id',
     order: sortStatus?.direction || props.order || 'asc',
     fields: fieldsList,
-    filter: combinedFilters.length > 0 ? combinedFilters : undefined,
+    // filter (props.filter) приходит через ...props выше; stateFilter
+    // и общий фильтр вью добавляет useFilteredSearchQuery.
   }) as TypedUseQueryHookResult<
     GetListResult<RecordType>,
     GetListParams,

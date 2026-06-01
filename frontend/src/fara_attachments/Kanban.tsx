@@ -28,7 +28,7 @@ import {
   IconEdit,
 } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
-import { useSearchQuery } from '@/services/api/crudApi';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import { GetListParams, GetListResult } from '@/services/api/crudTypes';
 import {
   BaseQueryFn,
@@ -289,9 +289,6 @@ function AttachmentCard({
       </Box>
     );
   };
-  {
-    console.log(attachment.storage_id);
-  }
   return (
     <>
       <Card
@@ -443,7 +440,7 @@ export function ViewKanbanAttachments() {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [showAllPreviews, setShowAllPreviews] = useState(false);
 
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'attachments',
     fields: [
       'id',

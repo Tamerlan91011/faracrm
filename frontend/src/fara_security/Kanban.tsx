@@ -24,9 +24,8 @@ import {
   IconCode,
 } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
-import { useSearchQuery } from '@/services/api/crudApi';
 import { GetListParams, GetListResult } from '@/services/api/crudTypes';
-import { useFilters } from '@/components/SearchFilter/FilterContext';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import {
   BaseQueryFn,
   TypedUseQueryHookResult,
@@ -126,9 +125,7 @@ function RuleCard({ rule, onClick }: { rule: RuleData; onClick: () => void }) {
 
 export function ViewKanbanRules() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'rules',
     fields: [
       'id',
@@ -145,7 +142,6 @@ export function ViewKanbanRules() {
     limit: 100,
     order: 'asc',
     sort: 'name',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<RuleData>,
     GetListParams,
@@ -279,15 +275,12 @@ function SessionCard({
 
 export function ViewKanbanSessions() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'sessions',
     fields: ['id', 'active', 'user_id', 'token', 'create_datetime', 'ttl'],
     limit: 100,
     order: 'desc',
     sort: 'id',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<SessionData>,
     GetListParams,
@@ -391,15 +384,12 @@ function AppCard({ app, onClick }: { app: AppData; onClick: () => void }) {
 
 export function ViewKanbanApps() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'apps',
     fields: ['id', 'code', 'name', 'active'],
     limit: 100,
     order: 'asc',
     sort: 'name',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<AppData>,
     GetListParams,
@@ -477,15 +467,12 @@ function RoleCard({ role, onClick }: { role: RoleData; onClick: () => void }) {
 
 export function ViewKanbanRoles() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'roles',
     fields: ['id', 'name', 'app_id'],
     limit: 100,
     order: 'asc',
     sort: 'name',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<RoleData>,
     GetListParams,
@@ -584,9 +571,7 @@ function AccessListCard({
 
 export function ViewKanbanAccessList() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'access_list',
     fields: [
       'id',
@@ -601,7 +586,6 @@ export function ViewKanbanAccessList() {
     limit: 100,
     order: 'asc',
     sort: 'name',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<AccessListData>,
     GetListParams,
@@ -671,15 +655,12 @@ function ModelCard({
 
 export function ViewKanbanModels() {
   const navigate = useNavigate();
-  const contextFilters = useFilters();
-
-  const { data } = useSearchQuery({
+  const { data } = useFilteredSearchQuery({
     model: 'models',
     fields: ['id', 'name', 'model'],
     limit: 100,
     order: 'asc',
     sort: 'name',
-    filter: contextFilters,
   }) as TypedUseQueryHookResult<
     GetListResult<ModelData>,
     GetListParams,

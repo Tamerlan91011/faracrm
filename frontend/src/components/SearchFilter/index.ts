@@ -9,5 +9,9 @@ export { SavedFiltersPreloader } from './SavedFiltersPreloader';
 export { useSearchFilter } from './useSearchFilter';
 export { useGetFieldsQuery } from '@/services/api/crudApi';
 export { FilterContext, useFilters } from './FilterContext';
+export {
+  useFilteredSearchQuery,
+  mergeFilters,
+} from './useFilteredSearchQuery';
 export * from './types';
 export * from './savedFiltersApi';

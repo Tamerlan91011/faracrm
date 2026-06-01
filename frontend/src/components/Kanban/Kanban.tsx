@@ -3,8 +3,13 @@ import { Card, Text, Badge, Group, Stack, ScrollArea, ActionIcon, Box } from '@m
 import { IconGripVertical, IconPlus } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
 import { useSearchQuery, useUpdateMutation } from '@/services/api/crudApi';
-import { FaraRecord, GetListParams, GetListResult } from '@/services/api/crudTypes';
-import { useFilters } from '@/components/SearchFilter/FilterContext';
+import {
+  FaraRecord,
+  GetListParams,
+  GetListResult,
+  FilterExpression,
+} from '@/services/api/crudTypes';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import {
   DndContext,
   DragEndEvent,
@@ -13,7 +18,10 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  closestCenter,
+  useDroppable,
+  pointerWithin,
+  rectIntersection,
+  CollisionDetection,
 } from '@dnd-kit/core';
 import {
   SortableContext,
@@ -135,6 +143,16 @@ interface KanbanColumnProps {
 
 // Колонка канбана (для группированного вида)
 function KanbanColumn({ stage, records, model, fields, onCardClick }: KanbanColumnProps) {
+  // Вся колонка — droppable-зона. Без этого нельзя было бросить карточку в
+  // пустую колонку или в пустое место под карточками: droppable'ами были
+  // только сами карточки (useSortable), а контейнер колонки — нет, поэтому
+  // SortableContext контейнер droppable НЕ делает. id колонки префиксуем
+  // `column-`, чтобы не пересечься с числовыми id карточек.
+  const { setNodeRef, isOver } = useDroppable({
+    id: `column-${stage.id}`,
+    data: { type: 'column', stageId: stage.id },
+  });
+
   return (
     <div className={classes.column}>
       <div
@@ -151,22 +169,34 @@ function KanbanColumn({ stage, records, model, fields, onCardClick }: KanbanColu
         </Group>
       </div>
       <ScrollArea className={classes.columnContent} offsetScrollbars>
-        <SortableContext
-          items={records.map(r => r.id)}
-          strategy={verticalListSortingStrategy}
+        <div
+          ref={setNodeRef}
+          style={{
+            minHeight: '100%',
+            borderRadius: 'var(--mantine-radius-md)',
+            backgroundColor: isOver
+              ? 'var(--mantine-color-blue-light)'
+              : undefined,
+            transition: 'background-color 0.15s ease',
+          }}
         >
-          <Stack gap="xs" p="xs">
-            {records.map(record => (
-              <SortableKanbanCard
-                key={record.id}
-                record={record}
-                model={model}
-                fields={fields}
-                onClick={() => onCardClick(record.id)}
-              />
-            ))}
-          </Stack>
-        </SortableContext>
+          <SortableContext
+            items={records.map(r => r.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <Stack gap="xs" p="xs" mih={60}>
+              {records.map(record => (
+                <SortableKanbanCard
+                  key={record.id}
+                  record={record}
+                  model={model}
+                  fields={fields}
+                  onClick={() => onCardClick(record.id)}
+                />
+              ))}
+            </Stack>
+          </SortableContext>
+        </div>
       </ScrollArea>
     </div>
   );
@@ -177,6 +207,8 @@ export interface KanbanProps<T extends FaraRecord> {
   fields?: (keyof T & string)[];
   groupByField?: keyof T & string;
   groupByModel?: string;
+  /** Жёсткий префильтр от родителя (комбинируется с общим фильтром вью). */
+  filter?: FilterExpression;
 }
 
 export function Kanban<T extends FaraRecord>({
@@ -184,6 +216,7 @@ export function Kanban<T extends FaraRecord>({
   fields = ['id', 'name'],
   groupByField,
   groupByModel,
+  filter,
 }: KanbanProps<T>) {
   const navigate = useNavigate();
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -197,21 +230,31 @@ export function Kanban<T extends FaraRecord>({
     })
   );
 
+  // pointerWithin — самый предсказуемый алгоритм для канбана: целевая колонка
+  // та, над которой реально курсор. Прежний closestCenter мерил расстояние от
+  // центра оверлея до центров карточек, и при колонках разной высоты ближайшей
+  // часто оставалась карточка ИСХОДНОЙ колонки — перенос между стадиями не
+  // срабатывал. Фолбэк на rectIntersection — на случай, когда курсор вышел за
+  // пределы всех droppable (быстрый бросок у края доски).
+  const collisionDetection = useCallback<CollisionDetection>(args => {
+    const pointerCollisions = pointerWithin(args);
+    return pointerCollisions.length > 0
+      ? pointerCollisions
+      : rectIntersection(args);
+  }, []);
+
   // Загрузка записей
   const fieldsWithGroup = groupByField && !fields.includes(groupByField)
     ? [...fields, groupByField]
     : fields;
 
-  // Фильтры из SearchFilter контекста
-  const contextFilters = useFilters();
-
-  const { data: recordsData } = useSearchQuery({
+  const { data: recordsData } = useFilteredSearchQuery({
     model,
     fields: fieldsWithGroup,
     limit: 500,
     order: 'asc',
     sort: 'id',
-    filter: contextFilters,
+    filter,
   }) as TypedUseQueryHookResult<GetListResult<T>, GetListParams, BaseQueryFn>;
 
   // Загрузка стадий (если группировка)
@@ -246,25 +289,32 @@ export function Kanban<T extends FaraRecord>({
     const activeRecord = recordsData?.data.find(r => r.id === active.id);
     if (!activeRecord) return;
 
-    // Найти новую колонку
-    const overRecord = recordsData?.data.find(r => r.id === over.id);
+    // Целевая стадия: либо бросили на колонку (id вида `column-<stageId>`),
+    // либо на карточку — тогда берём её стадию.
     let newStageId: number | undefined;
+    const overId = over.id;
 
-    if (overRecord) {
-      // Перетащили на другую карточку - берём её stage
-      const stageValue = overRecord[groupByField];
-      newStageId = typeof stageValue === 'object' ? stageValue?.id : stageValue;
+    if (typeof overId === 'string' && overId.startsWith('column-')) {
+      // Перетащили на колонку (в т.ч. пустую или в пустое место под карточками)
+      newStageId = Number(overId.slice('column-'.length));
     } else {
-      // Перетащили на пустую колонку
-      newStageId = over.id as number;
+      // Перетащили на другую карточку — берём её stage
+      const overRecord = recordsData?.data.find(r => r.id === overId);
+      if (overRecord) {
+        const stageValue = overRecord[groupByField];
+        newStageId =
+          typeof stageValue === 'object' ? stageValue?.id : stageValue;
+      }
     }
+
+    if (newStageId === undefined) return;
 
     const currentStageValue = activeRecord[groupByField];
     const currentStageId = typeof currentStageValue === 'object'
       ? currentStageValue?.id
       : currentStageValue;
 
-    if (newStageId && newStageId !== currentStageId) {
+    if (newStageId !== currentStageId) {
       await updateRecord({
         model,
         id: active.id as number,
@@ -275,9 +325,6 @@ export function Kanban<T extends FaraRecord>({
 
   const records = recordsData?.data || [];
   const stages = stagesData?.data || [];
-
-  // DEBUG: проверка что данные обновляются при фильтрации
-  console.log('Kanban render:', { recordsCount: records.length, filtersCount: contextFilters.length, contextFilters });
 
   // Группированный канбан
   if (groupByField && groupByModel && stages.length > 0) {
@@ -307,7 +354,7 @@ export function Kanban<T extends FaraRecord>({
     return (
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={collisionDetection}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >

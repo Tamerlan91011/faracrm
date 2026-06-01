@@ -25,7 +25,10 @@ export const VirtualId = 'VirtualId';
 export type Identifier = string | number;
 
 export type Triplet = [string, string, any];
-export type FilterItem = Triplet | 'and' | 'or';
+// Вложенная группа (FilterExpression как элемент) поддерживается бэком
+// (filter_parser.py: рекурсивный парс + авто-скобки) и используется
+// mergeFilters для безопасной AND-склейки выражений с внутренним OR.
+export type FilterItem = Triplet | 'and' | 'or' | FilterExpression;
 export type FilterExpression = FilterItem[];
 
 export type GetListParams = {

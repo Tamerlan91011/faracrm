@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 import { IconUser, IconCrown } from '@tabler/icons-react';
 import { useNavigate } from 'react-router-dom';
-import { useSearchQuery } from '@/services/api/crudApi';
+import { useFilteredSearchQuery } from '@/components/SearchFilter/useFilteredSearchQuery';
 import { SchemaUser } from '@/services/api/users';
 import { GetListParams, GetListResult } from '@/services/api/crudTypes';
 import {
@@ -154,7 +154,7 @@ function UserCard({ user, onClick }: UserCardProps) {
 export default function ViewKanbanUsers() {
   const navigate = useNavigate();
 
-  const { data: usersData } = useSearchQuery({
+  const { data: usersData } = useFilteredSearchQuery({
     model: 'users',
     fields: ['id', 'name', 'login', 'image', 'role_ids', 'is_admin'],
     limit: 100,
