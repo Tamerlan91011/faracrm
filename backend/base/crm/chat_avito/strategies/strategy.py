@@ -439,6 +439,22 @@ class AvitoStrategy(ChatStrategyBase):
                 return result
             return None
 
+    def _counterparty_user(
+        self, connector: "ChatConnector", info: dict | None
+    ) -> dict | None:
+        """Из info чата вернуть участника, отличного от нашего аккаунта.
+
+        В Avito массив users содержит обоих участников (нас и клиента).
+        Клиент — тот, чей id не равен нашему external_account_id.
+        """
+        if not info:
+            return None
+        me = str(connector.external_account_id or "")
+        for user in info.get("users") or []:
+            if str(user.get("id")) != me:
+                return user
+        return None
+
     async def get_item_title(
         self, connector: "ChatConnector", user_id, item_id, chat_id=None
     ):
@@ -471,63 +487,90 @@ class AvitoStrategy(ChatStrategyBase):
             "url": ctx_value.get("url") or "",
         }
 
-    async def get_partner_name(
-        self,
-        connector: "ChatConnector",
-        user_id: str,
-        chat_id: str | None = None,
-    ) -> str | None:
-        """
-        Получить имя клиента из чата.
+    # async def get_partner_name(
+    #     self,
+    #     connector: "ChatConnector",
+    #     user_id: str,
+    #     chat_id: str | None = None,
+    # ) -> str | None:
+    #     """
+    #     Получить имя клиента из чата.
 
-        API: GET /v2/accounts/{user_id}/chats/{chat_id}
-        """
-        if not chat_id:
-            return None
+    #     API: GET /v2/accounts/{user_id}/chats/{chat_id}
+    #     """
+    #     if not chat_id:
+    #         return None
 
-        url = (
-            f"{connector.connector_url or self.MESSENGER_URL}"
-            f"v2/accounts/{user_id}/chats/{chat_id}"
-        )
+    #     url = (
+    #         f"{connector.connector_url or self.MESSENGER_URL}"
+    #         f"v2/accounts/{user_id}/chats/{chat_id}"
+    #     )
 
-        token = await self.get_or_generate_token(connector)
-        headers = {"Authorization": token}
+    #     token = await self.get_or_generate_token(connector)
+    #     headers = {"Authorization": token}
 
-        async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
-            response = await client.get(url, headers=headers)
+    #     async with httpx.AsyncClient(timeout=self.TIMEOUT) as client:
+    #         response = await client.get(url, headers=headers)
 
-            if response.status_code == 200:
-                result = response.json()
-                users = result.get("users", [])
-                if users:
-                    return users[0].get("name")
+    #         if response.status_code == 200:
+    #             result = response.json()
+    #             # users содержит обоих участников — берём клиента (не нас).
+    #             other = self._counterparty_user(connector, result)
+    #             if other:
+    #                 return other.get("name")
 
-            return None
+    #         return None
 
-    async def resolve_partner_name(
+    async def resolve_partner(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
-    ) -> str | None:
-        """Avito не присылает имя клиента в webhook
-        Тянем имя одним вызовом
-        """
+    ) -> tuple[str | None, str | None]:
+        """Определить клиента чата за один запрос: (external_id, name).
 
-        user_id = adapter.user_id
-        chat_id = adapter.chat_id
-        partner_name = adapter.author_id or None
+        Avito не присылает имя клиента в webhook и не отличает «нас» от клиента
+        в author_id, поэтому участников берём из чата (v2/.../chats/{chat_id}) —
+        это даёт и имя, и id «другого» участника (того, кто не наш аккаунт).
+
+        - Пишет клиент (author != наш аккаунт): id = author_id; имя — из чата.
+        - Пишем мы (author == наш аккаунт): id и имя берём из участника чата.
+        - Клиента определить не удалось → (None, None): сообщение пропускается,
+          чтобы не завести партнёра/лид на наш аккаунт.
+        """
+        me = str(connector.external_account_id or "")
+        author = adapter.author_id
+
+        # Участники чата (имя в webhook не приходит; отсюда же id клиента,
+        # когда писали мы сами).
+        other = None
         try:
-            info = await self._get_chat_info(connector, user_id, chat_id) or {}
-            users = info.get("users") or []
-            partner_name = users[0].get("name")
+            info = await self._get_chat_info(
+                connector, adapter.user_id, adapter.chat_id
+            )
+            other = self._counterparty_user(connector, info)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Avito: failed to resolve partner name for chat %s: %s",
-                chat_id,
+                "Avito: failed to fetch chat %s participants: %s",
+                adapter.chat_id,
                 exc,
             )
 
-        return partner_name
+        # id клиента.
+        if author and author != me:
+            client_id = author
+        elif other and other.get("id") is not None:
+            client_id = str(other.get("id"))
+        else:
+            logger.warning(
+                "Avito: outgoing message %s in chat %s — cannot resolve "
+                "client from chat participants; skipping",
+                adapter.message_id,
+                adapter.chat_id,
+            )
+            return None, None
+
+        name = (other.get("name") if other else None) or client_id
+        return client_id, name
 
     async def get_self_account_id(self, connector: "ChatConnector") -> dict:
         """

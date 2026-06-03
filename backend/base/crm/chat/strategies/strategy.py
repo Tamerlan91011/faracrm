@@ -8,7 +8,7 @@ import json
 import logging
 import mimetypes
 
-from backend.base.crm.users.models.users import User
+from backend.base.crm.users.models.users import User, SYSTEM_USER_ID
 from backend.base.system.core.enviroment import env
 
 if TYPE_CHECKING:
@@ -260,17 +260,31 @@ class ChatStrategyBase(ABC):
         7. Отправить через WebSocket
         """
 
-        resolved_partner_name = await self.resolve_partner_name(
-            connector, adapter
+        # Клиент-контрагент чата: его id и имя одним хуком. Обычно это автор
+        # сообщения, но в некоторых интеграциях (Avito) webhook приходит и на
+        # наши исходящие — тогда клиента вычисляем из участников чата, а не из
+        # author_id (это будет наш аккаунт).
+        counterparty_external_id, partner_display_name = (
+            await self.resolve_partner(connector, adapter)
         )
+        if not counterparty_external_id:
+            # Не удалось определить клиента (например, наше сообщение, а
+            # второго участника достать не вышло) — пропускаем, чтобы не
+            # завести партнёра/лид на наш собственный аккаунт.
+            logger.info(
+                "[%s] Cannot resolve counterparty for message %s — skip",
+                self.strategy_type,
+                adapter.message_id,
+            )
+            return
 
         # 1. Найти или создать ExternalAccount + Contact (+ Partner если новый)
         external_account, contact, created = (
             await env.models.chat_external_account.find_or_create_for_webhook(
                 connector=connector,
-                external_id=adapter.author_id,
-                contact_value=adapter.author_id,  # email / phone / username
-                display_name=resolved_partner_name,
+                external_id=counterparty_external_id,
+                contact_value=counterparty_external_id,
+                display_name=partner_display_name,
                 raw=json.dumps(adapter.raw) if adapter.raw else None,
             )
         )
@@ -310,18 +324,23 @@ class ChatStrategyBase(ABC):
                 )
             )
 
-        # 3. Определяем автора сообщения через contact
-        # Если это оператор (есть user_id) - автор user
-        # Если это клиент (есть partner_id) - автор partner
+        # 3. Определяем автора сообщения.
+        # contact — это контакт КЛИЕНТА-контрагента.
         author_user_id = None
         author_partner_id = None
 
-        if contact.user_id:
-            # Оператор
-            author_user_id = contact.user_id.id
-        elif contact.partner_id:
-            # Клиент
-            author_partner_id = contact.partner_id.id
+        if adapter.is_from_external:
+            if contact.user_id:
+                # Оператор (контакт привязан к user)
+                author_user_id = contact.user_id.id
+            elif contact.partner_id:
+                # Клиент
+                author_partner_id = contact.partner_id.id
+        else:
+            # Наше сообщение (например, оператор написал клиенту прямо из
+            # приложения Avito). Конкретного оператора webhook не передаёт,
+            # поэтому автор — системный пользователь («магазин»).
+            author_user_id = SYSTEM_USER_ID
 
         # 4. Создаём сообщение
         # Для email коннектора используем message_type="email"
@@ -347,10 +366,14 @@ class ChatStrategyBase(ABC):
         # 6. Обрабатываем изображения
         await self._process_attachments(connector, adapter, message)
 
-        # 7. Лидогенерация — только для сообщений от клиента (не операторов)
+        # 7. Лидогенерация — по клиенту-контрагенту чата.
+        # Раньше условием было `author_partner_id`, но при исходящем
+        # сообщении автор — оператор, а лид всё равно нужен на клиента
+        # (contact.partner_id). Для входящих поведение не меняется: там
+        # contact — это и есть автор-клиент.
         if connector.lead_generation:
             try:
-                if author_partner_id:
+                if contact.partner_id:
                     await self._get_or_create_lead(
                         env=env,
                         connector=connector,
@@ -419,40 +442,45 @@ class ChatStrategyBase(ABC):
         ``chat.name``. Если не передано — фолбэк на ``adapter.author_name`` /
         ``adapter.author_id`` (обратная совместимость).
         """
-        # Находим оператора для назначения (теперь через connector)
-        operator_id = await connector.get_next_operator()
+        # Pull-модель: чат создаётся БЕЗ закреплённого оператора, создатель —
+        # системный пользователь. Подписываем руководителей коннектора
+        # (manager_ids) — они видят все чаты. Конкретный ответственный
+        # подпишется, когда возьмёт лид (см. Lead.update).
+        # manager_ids — M2M (store=False), поэтому подгружаем коннектор с этим
+        # полем и читаем через точку.
+        conns = await env.models.chat_connector.search(
+            filter=[("id", "=", connector.id)],
+            fields=["id", "manager_ids"],
+            limit=1,
+        )
+        managers = conns[0].manager_ids if conns else []
 
-        if not operator_id:
-            logger.warning(
-                "[%s] No operator available for connector %s",
-                self.strategy_type,
-                connector.id,
-            )
-            return None
-
-        # Создаём чат
-        # is_internal=False т.к. это внешний чат (от коннектора)
+        # Создаём чат.
+        # chat_type="group" — участников может быть >2 (партнёр + руководители
+        # + ответственный). is_internal=False т.к. это внешний чат.
         author_label = partner_name or adapter.author_name or adapter.author_id
         chat_name = f"{author_label} ({connector.name})"
 
         now = datetime.now(timezone.utc)
         chat = env.models.chat(
             name=chat_name,
-            chat_type="direct",
+            chat_type="group",
             is_internal=False,  # Внешний чат
-            create_user_id=User(id=operator_id),
+            create_user_id=User(id=SYSTEM_USER_ID),
             create_datetime=now,
             update_datetime=now,
         )
         chat_id = await env.models.chat.create(payload=chat)
-
-        # Добавляем оператора как участника (через ChatMember)
         chat_obj = await env.models.chat.get(chat_id)
-        operator_member = env.models.chat_member(
-            chat_id=chat_obj,
-            user_id=User(id=operator_id),
-        )
-        await env.models.chat_member.create(payload=operator_member)
+
+        # TODO: bulk create
+        # Подписываем руководителей коннектора как участников.
+        for manager in managers or []:
+            manager_member = env.models.chat_member(
+                chat_id=chat_obj,
+                user_id=manager,
+            )
+            await env.models.chat_member.create(payload=manager_member)
 
         # Добавляем клиента (партнёра) как участника (через contact)
         if (
@@ -865,20 +893,20 @@ class ChatStrategyBase(ABC):
             # Теперь у вас есть доступ и к mime_type, и к response.content
             return response.content, mime_type
 
-    async def get_partner_name(
-        self, connector: "ChatConnector", user_id: str
-    ) -> str | None:
-        """
-        Получить имя пользователя по его ID во внешней системе.
+    # async def get_partner_name(
+    #     self, connector: "ChatConnector", user_id: str
+    # ) -> str | None:
+    #     """
+    #     Получить имя пользователя по его ID во внешней системе.
 
-        Args:
-            connector: Экземпляр коннектора
-            user_id: ID пользователя
+    #     Args:
+    #         connector: Экземпляр коннектора
+    #         user_id: ID пользователя
 
-        Returns:
-            Имя пользователя или None
-        """
-        return None
+    #     Returns:
+    #         Имя пользователя или None
+    #     """
+    #     return None
 
     async def get_item_url(
         self, connector: "ChatConnector", user_id: str, item_id: str
@@ -1053,13 +1081,23 @@ class ChatStrategyBase(ABC):
             )
             return False
 
-    async def resolve_partner_name(
+    async def resolve_partner(
         self,
         connector: "ChatConnector",
         adapter: "ChatMessageAdapter",
-    ) -> str | None:
-        """Хук: вернуть человекочитаемое имя партнёра (клиента) по входящему
-        сообщению.
+    ) -> tuple[str | None, str | None]:
+        """Хук: вернуть (external_id, name) клиента-контрагента.
 
+        По умолчанию контрагент = автор сообщения. Это верно для коннекторов,
+        куда webhook приходит только на входящие сообщения от клиента
+        (Telegram, WhatsApp, email и т.п.).
+
+        Avito переопределяет: туда webhook приходит и на наши собственные
+        исходящие, поэтому клиента (id и имя) нужно определять по участникам
+        чата, а не по author_id.
+
+        external_id=None означает «не удалось определить клиента» — обработка
+        сообщения будет пропущена (см. _process_incoming_message), чтобы не
+        создавать партнёра/лид на наш собственный аккаунт.
         """
-        return adapter.author_name
+        return adapter.author_id, adapter.author_name

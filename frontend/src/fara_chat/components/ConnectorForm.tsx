@@ -69,14 +69,14 @@ export function ConnectorForm(props: ViewFormProps) {
           {/* Контент добавляется через расширения */}
         </FormTab>
 
-        {/* Операторы */}
+        {/* Руководители */}
         <FormTab
-          name="operators"
-          label={t('connector.tabs.operators', 'Операторы')}
+          name="managers"
+          label={t('connector.tabs.managers', 'Руководители')}
           icon={<IconUsers size={16} />}>
           <Field
-            name="operator_ids"
-            label={t('connector.fields.operators', 'Операторы')}>
+            name="manager_ids"
+            label={t('connector.fields.managers', 'Руководители')}>
             <Field name="id" />
             <Field name="name" />
             <Field name="login" />

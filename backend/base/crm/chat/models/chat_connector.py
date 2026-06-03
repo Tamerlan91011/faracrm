@@ -223,14 +223,31 @@ class ChatConnector(AuditMixin, DotModel):
     )
 
     # Операторы коннектора (Many2many с User)
-    operator_ids: list["User"] = Many2many(
+    # operator_ids: list["User"] = Many2many(
+    #     store=False,
+    #     relation_table=lambda: env.models.user,
+    #     many2many_table="chat_connector_operator_many2many",
+    #     column1="user_id",
+    #     column2="connector_id",
+    #     ondelete="cascade",
+    #     description="Операторы, работающие с этим коннектором",
+    #     default=[],
+    # )
+
+    # Руководители коннектора (Many2many с User).
+    # Pull-модель: автоматически подписываются на КАЖДЫЙ создаваемый чат и
+    # видят всю переписку. Обычный оператор в чат не подписан — он берёт
+    # лид из общего пула, и при взятии (Lead.update) подписывается сам.
+    manager_ids: list["User"] = Many2many(
         store=False,
         relation_table=lambda: env.models.user,
-        many2many_table="chat_connector_operator_many2many",
+        many2many_table="chat_connector_manager_many2many",
         column1="user_id",
         column2="connector_id",
         ondelete="cascade",
-        description="Операторы, работающие с этим коннектором",
+        description=(
+            "Руководители: автоматически добавляются во все чаты коннектора"
+        ),
         default=[],
     )
 
@@ -474,21 +491,21 @@ class ChatConnector(AuditMixin, DotModel):
                 )
                 logger.info("Deactivated %s contacts", len(ids))
 
-    async def get_next_operator(self):
-        """
-        Получить следующего доступного оператора для распределения чата.
+    # async def get_next_operator(self):
+    #     """
+    #     Получить следующего доступного оператора для распределения чата.
 
-        Returns:
-            Пользователь-оператор или None
-        """
-        operators = await self._get_current_operator_ids()
+    #     Returns:
+    #         Пользователь-оператор или None
+    #     """
+    #     operators = await self._get_current_operator_ids()
 
-        if not operators:
-            return None
+    #     if not operators:
+    #         return None
 
-        # TODO: Реализовать round-robin или load balancing
-        # Пока возвращаем первого
-        return operators[0]
+    #     # TODO: Реализовать round-robin или load balancing
+    #     # Пока возвращаем первого
+    #     return operators[0]
 
     @property
     def strategy(self):

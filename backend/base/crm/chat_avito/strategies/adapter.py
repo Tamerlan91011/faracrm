@@ -212,12 +212,13 @@ class AvitoMessageAdapter(ChatMessageAdapter):
     @property
     def is_from_external(self) -> bool:
         """
-        Сообщение от внешнего пользователя (клиента).
+        Сообщение от внешнего пользователя (клиента), а не от нас.
 
-        В Avito webhook приходит когда клиент пишет продавцу,
-        поэтому всегда True.
+        Avito шлёт webhook и на наши собственные исходящие сообщения,
+        поэтому «внешнее» = автор не равен нашему аккаунту
+        (connector.external_account_id).
         """
-        return True
+        return self.author_id != self.connector.external_account_id
 
     def get_chat_url(self) -> str:
         """Получить URL для открытия чата в веб-интерфейсе Avito."""

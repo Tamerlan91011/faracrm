@@ -152,14 +152,16 @@
       "leadGenerationDistribution": "Распределение лидов",
       "leadGeneration": "Генерация лидов",
       "leadStage": "Начальная стадия для лидов",
-      "routingRules": "Правила распределения лидов"
+      "routingRules": "Правила распределения лидов",
+      "managers": "Руководители"
     },
     "tabs": {
       "connection": "Подключение",
       "webhooks": "Webhooks",
       "auth": "Авторизация",
       "crm": "CRM",
-      "logs": "Логи"
+      "logs": "Логи",
+      "managers": "Руководители"
     },
     "groups": {
       "routingRules": "Роутинг лидов",

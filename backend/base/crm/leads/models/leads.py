@@ -7,7 +7,10 @@ if TYPE_CHECKING:
     from backend.base.crm.chat.models.chat_connector import ChatConnector
     from .lead_stage import LeadStage
 
+import logging
+
 from ...partners.models.contact import Contact
+from backend.base.system.dotorm.dotorm.decorators import hybridmethod
 from backend.base.system.dotorm.dotorm.fields import (
     Char,
     Integer,
@@ -23,6 +26,8 @@ from backend.base.system.core.enviroment import env
 from backend.base.crm.security.polymorphic_parent import (
     PolymorphicParentMixin,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class Lead(AuditMixin, PolymorphicParentMixin):
@@ -83,3 +88,54 @@ class Lead(AuditMixin, PolymorphicParentMixin):
         relation_table_field="partner_id",
         description="Контакты",
     )
+
+    @hybridmethod
+    async def update(
+        self, payload, fields=None, session=None, depends_jobs=None
+    ):
+        """Pull-модель: когда лид «берут» (появляется user_id), ответственный
+        автоматически подписывается на внешний чат клиента по этому коннектору.
+
+        Лид создаётся без user_id и лежит в общем пуле; первый, кто поставит
+        себя в Salesperson, становится участником чата и может писать клиенту.
+        Старых участников не трогаем — история переписки видна всем, кто был
+        в чате.
+        """
+        result = await super().update(payload, fields, session, depends_jobs)
+
+        # Только когда проставляют ответственного.
+        if fields is not None and "user_id" not in fields:
+            return result
+        if not payload.user_id or not self.partner_id or not self.connector_id:
+            return result
+
+        # Чаты клиента по этому коннектору: партнёр — активный участник, и
+        # чат привязан к внешнему чату коннектора. Подписываем ответственного
+        # (_ensure_membership добавит, только если ещё не участник).
+        try:
+            partner_members = await env.models.chat_member.search(
+                filter=[
+                    ("partner_id", "=", self.partner_id.id),
+                    ("is_active", "=", True),
+                ],
+                fields=["chat_id"],
+            )
+            chat_ids = [m.chat_id.id for m in partner_members if m.chat_id]
+            if chat_ids:
+                ext_chats = await env.models.chat_external_chat.search(
+                    filter=[
+                        ("connector_id", "=", self.connector_id.id),
+                        ("chat_id", "in", chat_ids),
+                    ],
+                    fields=["chat_id"],
+                )
+                for ec in ext_chats:
+                    await env.models.chat._ensure_membership(
+                        ec.chat_id.id, payload.user_id.id
+                    )
+        except Exception as exc:  # noqa: BLE001
+            # Подписка не должна ломать обновление лида.
+            logger.warning(
+                "Lead %s: failed to subscribe user to chat: %s", self.id, exc
+            )
+        return result

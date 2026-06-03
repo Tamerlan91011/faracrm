@@ -152,14 +152,16 @@
       "leadGenerationDistribution": "Lead distribution",
       "leadGeneration": "Lead generation",
       "leadStage": "Lead stage",
-      "routingRules": "Routing rules"
+      "routingRules": "Routing rules",
+      "managers": "Managers"
     },
     "tabs": {
       "connection": "Connection",
       "webhooks": "Webhooks",
       "auth": "Authorization",
       "crm": "CRM",
-      "logs": "Logs"
+      "logs": "Logs",
+      "managers": "Managers"
     },
     "groups": {
       "routingRules": "Lead routing rules",
