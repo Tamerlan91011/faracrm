@@ -37,6 +37,8 @@ interface ListProps<RecordType extends FaraRecord>
   rowClassName?: (record: RecordType) => string;
   /** Callback для получения refetch функции */
   onRefetch?: (refetch: () => void) => void;
+  /** Показывать ли массовые действия в тулбаре (по умолчанию выключено). */
+  massActions?: boolean;
 }
 
 export const List = <RecordType extends FaraRecord>({
@@ -44,6 +46,7 @@ export const List = <RecordType extends FaraRecord>({
   toolbarActions,
   rowClassName,
   onRefetch,
+  massActions = true,
   ...props
 }: ListProps<RecordType>) => {
   const navigate = useNavigate();
@@ -279,6 +282,8 @@ export const List = <RecordType extends FaraRecord>({
       <Toolbar
         selectedRecords={selectedRecords}
         model={props.model}
+        fields={data.fields}
+        massActions={massActions}
         extraActions={toolbarActions}
         onClearSelection={() => setSelectedRecords([])}
       />

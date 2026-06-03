@@ -58,6 +58,8 @@ export interface GetListField {
   name: string;
   type: string;
   relation?: string;
+  /** Для Selection-полей бэкенд (get_fields_info_list) отдаёт варианты. */
+  options?: string[];
   required?: boolean;
 }
 export interface GetFormField {
@@ -79,6 +81,14 @@ export type DeleteListParams = {
   ids: Identifier[];
 };
 export type DeleteListResult = true;
+
+export type UpdateBulkParams = {
+  model: string;
+  ids: Identifier[];
+  /** Поля, которые выставляются всем выбранным записям одинаково. */
+  values: Record<string, any>;
+};
+export type UpdateBulkResult = Record<string, any>;
 
 export type ReadResult<RecordType extends FaraRecord> = {
   data: RecordType;

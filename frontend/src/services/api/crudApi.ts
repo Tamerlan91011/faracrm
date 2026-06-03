@@ -17,6 +17,8 @@ import {
   ReadDefaultValuesResult,
   ReadParams,
   ReadResult,
+  UpdateBulkParams,
+  UpdateBulkResult,
 } from './crudTypes';
 
 // Prefix для автогенерированных CRUD роутов бекенда
@@ -179,6 +181,20 @@ export const crudApi = createApi({
         },
       }),
       providesTags: (result, error, arg) => [arg.model],
+    }),
+
+    updateBulk: build.mutation<UpdateBulkResult, UpdateBulkParams>({
+      query: ({ model, ids, values }) => ({
+        url: `${AUTO}/${model}/bulk`,
+        method: 'PUT',
+        body: { ids, values },
+      }),
+      // После массового апдейта перечитываем список и каждую затронутую
+      // запись (открытая форма / кеш read).
+      invalidatesTags: (result, error, arg) => [
+        { type: arg.model, id: 'LIST' },
+        ...arg.ids.map(id => ({ type: arg.model, id }) as FaraRecord),
+      ],
     }),
 
     update: build.mutation<EditResult<FaraRecord>, EditParams<FaraRecord>>({
@@ -387,6 +403,7 @@ export const {
   useReadQuery,
   useReadDefaultValuesQuery,
   useUpdateMutation,
+  useUpdateBulkMutation,
   useCreateMutation,
   useGetOnchangeFieldsQuery,
   useExecuteOnchangeMutation,

@@ -8,7 +8,7 @@
 import asyncio
 from typing import Any, Callable, Literal, Type
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query
 from fastapi.responses import JSONResponse
 from starlette.status import HTTP_404_NOT_FOUND, HTTP_400_BAD_REQUEST
 
@@ -132,6 +132,14 @@ class CRUDRouterGenerator(APIRouter):
 
     def _add_update_routes(self) -> None:
         """Добавляет роуты обновления."""
+        # ВАЖНО: /bulk регистрируем РАНЬШЕ /{id}, иначе FastAPI сматчит
+        # PUT /bulk на /{id} с id="bulk" → 422. (Так же сделано для DELETE.)
+        self.add_api_route(
+            f"{self.Model.__route__}/bulk",
+            self._update_bulk(),
+            methods=["PUT"],
+            dependencies=[Depends(AuthTokenApp.verify_access)],
+        )
         self.add_api_route(
             f"{self.Model.__route__}/{{id}}",
             self._update(),
@@ -353,6 +361,31 @@ class CRUDRouterGenerator(APIRouter):
 
             await record.update(model_instance, fields_names)
 
+            return _strip_bytes(payload_dict)
+
+        return route
+
+    def _update_bulk(self) -> Callable:
+        """Массовое обновление: один и тот же payload на список ids.
+
+        Зеркалит _update, но вместо одной записи зовёт уже существующий
+        Model.update_bulk(ids, instance). Тело запроса — два body-параметра,
+        FastAPI вкладывает их под именами: {"ids": [...], "values": {...}}.
+        values валидируется той же схемой, что и одиночный апдейт, поэтому
+        Many2one принимается в том же формате, что и в обычном update.
+        """
+        Model = self.Model
+        schema_input = self._schema_update
+
+        async def route(
+            ids: list[int] = Body(...),
+            values: schema_input = Body(...),  # type: ignore
+        ):
+            payload_dict = values.model_dump(exclude_unset=True)
+            if not ids or not payload_dict:
+                return _strip_bytes(payload_dict)
+            model_instance = Model(**payload_dict)
+            await Model.update_bulk(ids, model_instance)
             return _strip_bytes(payload_dict)
 
         return route

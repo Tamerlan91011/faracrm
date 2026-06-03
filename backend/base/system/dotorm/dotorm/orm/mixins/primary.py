@@ -226,6 +226,11 @@ class OrmPrimaryMixin(_Base):
             # exclude_none=True,
             exclude_unset=True,
             only_store=True,
+            # mode=UPDATE — как в _update_store: иначе Many2one сериализуется
+            # вложенным объектом {id, name}, и SQL-привязка падает
+            # ('dict' object cannot be interpreted as an integer). С этим
+            # режимом m2o отдаётся скалярным FK-id.
+            mode=JsonMode.UPDATE,
         )
 
         # @depends: пре-фетч ДО UPDATE, чтобы сохранить СТАРЫЕ значения

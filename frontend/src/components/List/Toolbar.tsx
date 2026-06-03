@@ -3,18 +3,22 @@ import { Flex, Group, Loader, Text, ThemeIcon, Button } from '@mantine/core';
 import { IconCheck, IconX, IconArrowBackUp } from '@tabler/icons-react';
 import { Actions } from './Actions';
 import { NewButton } from './NewButton';
-import { FaraRecord } from '@/services/api/crudTypes';
+import { FaraRecord, GetListField } from '@/services/api/crudTypes';
 
 type DeleteStatus = 'idle' | 'loading' | 'success' | 'error';
 
 export const Toolbar = <RecordType extends FaraRecord>({
   model,
   selectedRecords,
+  fields,
+  massActions,
   extraActions,
   onClearSelection,
 }: {
   model: string;
   selectedRecords: RecordType[];
+  fields?: GetListField[];
+  massActions?: boolean;
   extraActions?: React.ReactNode;
   onClearSelection?: () => void;
 }) => {
@@ -115,6 +119,8 @@ export const Toolbar = <RecordType extends FaraRecord>({
             <Actions
               resource={model}
               selectedIds={selectedRecords}
+              fields={fields}
+              massActions={massActions}
               onClearSelection={onClearSelection}
               onDeleteStart={handleDeleteStart}
               onDeleteSuccess={handleDeleteSuccess}
