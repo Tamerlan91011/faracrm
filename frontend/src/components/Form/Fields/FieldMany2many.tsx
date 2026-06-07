@@ -231,12 +231,13 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
       const formState = form.getValues()['_' + name];
       const manuallySelectedIds: number[] = formState?.selected || [];
       setRecords(prev => {
-        const serverIds = new Set(
-          serverRecords.map(r => r.id).filter(Boolean),
-        );
+        const serverIds = new Set(serverRecords.map(r => r.id).filter(Boolean));
         // Оставляем ручные добавления которых нет в серверных данных
         const manualOnly = prev.filter(
-          r => r.id && manuallySelectedIds.includes(r.id as number) && !serverIds.has(r.id),
+          r =>
+            r.id &&
+            manuallySelectedIds.includes(r.id as number) &&
+            !serverIds.has(r.id),
         );
         return [...serverRecords, ...manualOnly];
       });
@@ -480,12 +481,23 @@ export const FieldMany2many = <RecordType extends FaraRecord>({
               }
             }}
             // Pagination
-            totalRecords={totalRecords}
-            recordsPerPage={pageSize}
-            page={page}
-            onPageChange={setPage}
-            recordsPerPageOptions={PAGE_SIZES}
-            onRecordsPerPageChange={setPageSize}
+            // totalRecords={totalRecords}
+            // recordsPerPage={pageSize}
+            // page={page}
+            // onPageChange={setPage}
+            // recordsPerPageOptions={PAGE_SIZES}
+            // onRecordsPerPageChange={setPageSize}
+
+            {...(totalRecords > PAGE_SIZES[0]
+              ? {
+                  totalRecords,
+                  recordsPerPage: pageSize,
+                  page,
+                  onPageChange: setPage,
+                  recordsPerPageOptions: PAGE_SIZES,
+                  onRecordsPerPageChange: setPageSize,
+                }
+              : {})}
             paginationText={({ from, to, totalRecords }) =>
               `${from}–${to} из ${totalRecords}`
             }
