@@ -618,6 +618,8 @@ export interface ChatMember {
   name: string;
   email?: string;
   member_type?: 'user' | 'partner';
+  /** Attachment id аватарки участника (null — нет аватара). */
+  image_id?: number | null;
   permissions?: MemberPermissions;
 }
 

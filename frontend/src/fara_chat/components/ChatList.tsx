@@ -28,6 +28,7 @@ import { ViewSettingsPopover, ViewSettingsOption } from './ViewSettingsPopover';
 import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 import { useGetChatsQuery, Chat, ChatLastMessage } from '@/services/api/chat';
+import { attachmentPreviewUrl } from '@/utils/attachmentUrls';
 import styles from './ChatList.module.css';
 
 /**
@@ -118,6 +119,7 @@ export function ChatList({
   // ViewSettingsPopover делает это сам.
   const session = useSelector((s: any) => s.auth?.session);
   const isAdmin = !!session?.user_id?.is_admin;
+  const currentUserId = session?.user_id?.id ?? 0;
 
   // Один источник правды для опций — используется и десктопным
   // ViewSettingsPopover, и мобильным Menu.
@@ -190,9 +192,26 @@ export function ChatList({
 
   const chats = data?.data || [];
 
-  // Filter chats by search
+  // Собеседник в direct-чате = участник, который НЕ текущий юзер (по id, не
+  // по имени). Включает и партнёра (у внешних чатов собеседник — партнёр).
+  const getOtherMember = (chat: Chat) =>
+    chat.chat_type === 'direct' && chat.members.length === 2
+      ? chat.members.find(
+          m =>
+            !(
+              (m.member_type === 'user' || !m.member_type) &&
+              m.id === currentUserId
+            ),
+        )
+      : undefined;
+
+  // Динамическое имя: в direct-чатах — имя собеседника, а не сохранённое
+  // chat.name (там мог остаться формат «X - Y» / имя админа).
+  const getDisplayName = (chat: Chat) => getOtherMember(chat)?.name || chat.name;
+
+  // Filter chats by search (по отображаемому имени)
   const filteredChats = chats.filter(chat =>
-    chat.name.toLowerCase().includes(search.toLowerCase()),
+    getDisplayName(chat).toLowerCase().includes(search.toLowerCase()),
   );
 
   const formatTime = (dateString?: string) => {
@@ -227,9 +246,14 @@ export function ChatList({
 
   const getChatIcon = (chat: Chat) => {
     if (chat.chat_type === 'direct' && chat.members.length === 2) {
-      const otherMember = chat.members.find(m => m.name === chat.name);
+      const otherMember = getOtherMember(chat);
+      // Аватар собеседника; инициалы — фолбэк, если у пользователя нет
+      // загруженной картинки (image_id пустой) или она не загрузилась.
+      const avatarSrc = otherMember?.image_id
+        ? attachmentPreviewUrl(otherMember.image_id, 80, 80)
+        : undefined;
       return (
-        <Avatar color="blue" radius="xl" size="md">
+        <Avatar color="blue" radius="xl" size="md" src={avatarSrc}>
           {getInitials(otherMember?.name || chat.name)}
         </Avatar>
       );
@@ -373,7 +397,7 @@ export function ChatList({
                   <Box style={{ flex: 1, overflow: 'hidden' }}>
                     <Group justify="space-between" wrap="nowrap">
                       <Text fw={500} truncate style={{ flex: 1 }}>
-                        {chat.name}
+                        {getDisplayName(chat)}
                       </Text>
                       <Text size="xs" c="dimmed">
                         {formatTime(

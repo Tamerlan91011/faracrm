@@ -87,6 +87,8 @@ class ChatMember(BaseModel):
     name: str
     email: str | None = None
     member_type: str | None = None
+    # Attachment id аватарки (users.image / partners.image). None — нет аватара.
+    image_id: int | None = None
     permissions: MemberPermissions | None = None
 
 

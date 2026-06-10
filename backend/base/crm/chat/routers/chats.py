@@ -191,6 +191,7 @@ async def get_chats(
                COALESCE(u.id, p.id) as id,
                COALESCE(u.name, p.name) as name,
                CASE WHEN cm.user_id IS NOT NULL THEN 'user' ELSE 'partner' END as member_type,
+               COALESCE(u.image, p.image) as image_id,
                cm.can_read,
                cm.can_write,
                cm.can_invite,
@@ -279,6 +280,7 @@ async def get_chats(
                 "id": m["id"],
                 "name": m["name"],
                 "member_type": m["member_type"],
+                "image_id": m["image_id"],
                 "permissions": {
                     "can_read": m["can_read"],
                     "can_write": m["can_write"],
@@ -425,6 +427,7 @@ async def get_chat(req: Request, chat_id: int):
             COALESCE(u.id, p.id) as id,
             COALESCE(u.name, p.name) as name,
             CASE WHEN cm.user_id IS NOT NULL THEN 'user' ELSE 'partner' END as member_type,
+            COALESCE(u.image, p.image) as image_id,
             cm.can_read,
             cm.can_write,
             cm.can_invite,
@@ -442,6 +445,7 @@ async def get_chat(req: Request, chat_id: int):
             "id": m["id"],
             "name": m["name"],
             "member_type": m["member_type"],
+            "image_id": m["image_id"],
             "permissions": {
                 "can_read": m["can_read"],
                 "can_write": m["can_write"],

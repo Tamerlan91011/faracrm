@@ -14,6 +14,7 @@ import {
 } from '@tabler/icons-react';
 import { useTranslation } from 'react-i18next';
 import { Chat } from '@/services/api/chat';
+import { attachmentPreviewUrl } from '@/utils/attachmentUrls';
 import styles from './ChatHeader.module.css';
 
 interface ChatHeaderProps {
@@ -59,6 +60,23 @@ export function ChatHeader({
         )
       : null;
 
+  // Собеседник в direct-чате = участник, который НЕ текущий юзер (по id, не
+  // по имени). Включает и партнёра (у внешних чатов собеседник — партнёр).
+  const otherMember =
+    chat.chat_type === 'direct' && members.length === 2
+      ? members.find(
+          m =>
+            !(
+              (m.member_type === 'user' || !m.member_type) &&
+              m.id === currentUserId
+            ),
+        )
+      : undefined;
+
+  // Динамическое имя для шапки: в direct-чатах — имя собеседника, а не
+  // сохранённое chat.name (там мог остаться формат «X - Y» / имя админа).
+  const displayName = otherMember?.name || chat.name;
+
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -85,9 +103,13 @@ export function ChatHeader({
 
   const getChatIcon = () => {
     if (chat.chat_type === 'direct' && members.length === 2) {
-      const otherMember = members.find(m => m.name === chat.name);
+      // Аватар собеседника; инициалы — фолбэк, если у пользователя нет
+      // загруженной картинки (image_id пустой) или она не загрузилась.
+      const avatarSrc = otherMember?.image_id
+        ? attachmentPreviewUrl(otherMember.image_id, 80, 80)
+        : undefined;
       return (
-        <Avatar color="blue" radius="xl" size="md">
+        <Avatar color="blue" radius="xl" size="md" src={avatarSrc}>
           {getInitials(otherMember?.name || chat.name)}
         </Avatar>
       );
@@ -118,7 +140,7 @@ export function ChatHeader({
 
           <Box style={{ overflow: 'hidden' }}>
             <Text fw={600} truncate>
-              {chat.name}
+              {displayName}
             </Text>
             <Text
               size="sm"
