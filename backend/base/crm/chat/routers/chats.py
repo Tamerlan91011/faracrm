@@ -31,6 +31,39 @@ router_private = APIRouter(
 )
 
 
+def _resolve_direct_chat_name(
+    chat_type: str,
+    members: list[dict],
+    current_user_id: int,
+    stored_name: str,
+) -> str:
+    """Имя чата для отдачи клиенту.
+
+    Для direct-чата:
+      - имя всегда актуально, если собеседник сменил имя;
+      - старые чаты «переименовываются» сами собой — имя не зависит от того,
+        когда и под каким названием чат был создан;
+      - имя корректно для каждого зрителя (A видит B, B видит A) — одного
+        хранимого поля для этого в принципе не хватило бы.
+    """
+    if chat_type != "direct":
+        return stored_name
+    # Собеседник = любой участник, кроме текущего юзера. Партнёр (member_type
+    # 'partner') никогда не является текущим юзером, поэтому исключаем только
+    # user-участника с совпадающим id (member_type None трактуем как 'user').
+    others = [
+        m
+        for m in members
+        if not (
+            m.get("member_type") in ("user", None)
+            and m.get("id") == current_user_id
+        )
+    ]
+    if not others:
+        return stored_name  # чат с самим собой / собеседник не найден
+    return others[0].get("name") or stored_name
+
+
 @router_private.get("/chats")
 async def get_chats(
     req: Request,
@@ -349,7 +382,12 @@ async def get_chats(
     for chat in chats_sorted:
         chat_data = {
             "id": chat.id,
-            "name": chat.name,
+            "name": _resolve_direct_chat_name(
+                chat.chat_type,
+                members_by_chat.get(chat.id, []),
+                user_id,
+                chat.name,
+            ),
             "chat_type": chat.chat_type,
             "is_internal": chat.is_internal,
             "active": chat.active,
@@ -461,7 +499,12 @@ async def get_chat(req: Request, chat_id: int):
     return {
         "data": {
             "id": chat.id,
-            "name": chat.name,
+            "name": _resolve_direct_chat_name(
+                chat.chat_type,
+                members,
+                user_id,
+                chat.name,
+            ),
             "chat_type": chat.chat_type,
             "description": chat.description,
             "is_internal": chat.is_internal,
