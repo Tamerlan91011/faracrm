@@ -5,7 +5,7 @@ if TYPE_CHECKING:
     from backend.base.system.core.enviroment import Environment
 
 from backend.base.system.core.app import App
-from backend.base.crm.security.acl_post_init_mixin import ACL
+from backend.base.crm.security.acl_post_init_mixin import ACL, ACLPerms
 from .models.users import (
     User,
     ADMIN_USER_ID,
@@ -41,7 +41,13 @@ class UserApp(App):
     }
 
     BASE_USER_ACL = {
-        "user": ACL.NO_CREATE,
+        "user": ACLPerms(create=False, read=True, update=True, delete=False),
+    }
+
+    ROLE_ACL = {
+        "system_admin": {
+            "user": ACL.FULL,
+        },
     }
 
     async def post_init(self, app: "FastAPI"):
@@ -233,18 +239,6 @@ class UserApp(App):
                         "perm_update": True,
                         "perm_delete": False,
                     },
-                    # 2b: read открыт всем base_user-юзерам.
-                    # Стандартный pattern для CRM — сотрудники видят
-                    # друг друга для упоминаний, назначений, авторства.
-                    {
-                        "name": "Users readable by all authenticated",
-                        "role_id": base_user_role_id,
-                        "domain": [],
-                        "perm_create": False,
-                        "perm_read": True,
-                        "perm_update": False,
-                        "perm_delete": False,
-                    },
                 ]
             )
 
@@ -254,7 +248,7 @@ class UserApp(App):
                 {
                     "name": "System admin can see and edit all users",
                     "role_id": system_admin_role_id,
-                    "domain": [],
+                    "domain": [["id", "!=", None]],
                     "perm_create": False,
                     "perm_read": True,
                     "perm_update": True,
