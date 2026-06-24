@@ -114,6 +114,47 @@ class Role(DotModel):
             SELECT DISTINCT role_id FROM role_tree
         """
 
-        session = env.apps.db.get_session()
+        session = cls._get_db_session()
         result = await session.execute(query, [role_ids], cursor="fetch")
         return [row["role_id"] for row in result]
+
+    async def update(
+        self,
+        payload: Self,
+        fields: list[str] | None = None,
+        session=None,
+        depends_jobs=None,
+    ):
+        await super().update(payload, fields, session, depends_jobs)
+
+        # Смена иерархии (based_role_ids) меняет развёрнутый набор ролей у
+        # всех, кто наследует эту роль → точечно инвалидируем сессии ТОЛЬКО
+        # затронутых юзеров (не весь кэш). acl_ids/rule_ids на коды ролей в
+        # сессии не влияют (ACL/Rules и так читаются из БД) — их не трогаем.
+        changed = fields or payload.assigned_fields()
+        if "based_role_ids" in changed:
+            affected = await self._affected_user_ids()
+            if affected:
+                await env.models.session.publish_roles_changed(affected)
+
+    async def _affected_user_ids(self) -> list[int]:
+        """ID юзеров, чей развёрнутый набор ролей включает эту роль.
+
+        Это она сама + все роли, которые её транзитивно наследуют
+        (обратный обход based_role_ids), затем — юзеры с любой из них.
+        """
+        query = """
+            WITH RECURSIVE inheritors AS (
+                SELECT $1::int AS role_id
+                UNION
+                SELECT rb.role_id
+                FROM inheritors i
+                JOIN role_based_many2many rb ON rb.based_role_id = i.role_id
+            )
+            SELECT DISTINCT ur.user_id
+            FROM inheritors inh
+            JOIN user_role_many2many ur ON ur.role_id = inh.role_id
+        """
+        session = self._get_db_session()
+        result = await session.execute(query, [self.id], cursor="fetch")
+        return [row["user_id"] for row in result]

@@ -330,6 +330,11 @@ class Session(DotModel):
             ),
         )
 
+        # Развёрнутые роли в сессию — чтобы field-level проверка читала их
+        # без запроса в БД. Не-кэшируемый путь грузит свежие на каждый
+        # запрос (один CTE), поэтому инвалидация тут не нужна.
+        codes = await env.models.user.get_all_role_codes(session_id["user_id"])
+        self._set_role_codes(session_obj, codes)
         return session_obj
 
     @hybridmethod
@@ -432,7 +437,7 @@ class Session(DotModel):
         ):
             raise AuthException.SessionNotExist()
 
-        return Session(
+        session_obj = Session(
             id=cached.session_id,
             ttl=cached.ttl,
             create_datetime=cached.create_datetime,
@@ -447,6 +452,11 @@ class Session(DotModel):
                 ),
             ),
         )
+        # Роли из кэша (положены в _fetch_session_from_db). При смене
+        # ролей запись инвалидируется через шину → следующий запрос
+        # пересоберёт кэш со свежими кодами.
+        self._set_role_codes(session_obj, cached.role_codes)
+        return session_obj
 
     @hybridmethod
     async def session_check_by_cookie_cached(self, cookie_token: str):
@@ -519,6 +529,9 @@ class Session(DotModel):
             return None
 
         row = result[0]
+        # Развёрнутые коды ролей кладём в кэш — чтобы field-level проверка
+        # на cache-hit не ходила в БД. Обновляются через invalidate_user.
+        codes = await env.models.user.get_all_role_codes(row["user_id"])
         cached = CachedSession(
             session_id=row["id"],
             user_id=row["user_id"],
@@ -531,6 +544,7 @@ class Session(DotModel):
             expired_datetime=row["expired_datetime"],
             ttl=row["ttl"],
             create_datetime=row["create_datetime"],
+            role_codes=tuple(codes),
         )
         await cache.put(cached)
         return cached
@@ -602,3 +616,65 @@ class Session(DotModel):
             "session_revoked",
             {"session_ids": list(session_ids)},
         )
+
+    @staticmethod
+    def _set_role_codes(session_obj: "Session", codes) -> None:
+        """Кладёт развёрнутые роли в сессию как Role(code=...).
+
+        Field-level проверка (check_field_access) читает их прямо из
+        session.user_id.role_ids — без запроса в БД.
+        """
+        session_obj.user_id.role_ids = [
+            env.models.role(code=c) for c in (codes or ())
+        ]
+
+    @classmethod
+    async def publish_roles_changed(cls, user_ids: list[int]) -> None:
+        """
+        Опубликовать смену authz-атрибутов (роли/суперюзер) пользователей.
+
+        Все воркеры сбрасывают сессии этих юзеров из SessionCache (НЕ
+        revoke — без logout) → следующий запрос пересоберёт сессию со
+        свежими ролями. No-op при выключенном кэше / без pubsub.
+        """
+        if not user_ids:
+            return
+        try:
+            pubsub = env.apps.chat.chat_manager.pubsub
+        except Exception:
+            pubsub = None
+        if pubsub is None:
+            # Нет pubsub (тесты / single-process без chat) — локально.
+            try:
+                cache = env.apps.auth.session_cache
+                for uid in user_ids:
+                    await cache.invalidate_user(uid)
+            except Exception as e:
+                logger.warning("Failed to invalidate user sessions: %s", e)
+            return
+        await pubsub.publish(
+            "session_roles_changed",
+            {"user_ids": list(user_ids)},
+        )
+
+    @classmethod
+    async def handle_pubsub_event(cls, event: dict) -> None:
+        """
+        Потребитель шины для auth-событий. Вызывается из общего
+        диспетчера (chat/app.py) для type session_revoked /
+        session_roles_changed — так logout/revoke и смена ролей доходят
+        до ВСЕХ воркеров (раньше session_revoked не имел потребителя).
+        """
+        etype = event.get("type")
+        try:
+            cache = env.apps.auth.session_cache
+        except Exception:
+            return
+        if cache is None:
+            return
+        if etype == "session_revoked":
+            for sid in event.get("session_ids", []):
+                await cache.revoke(sid)
+        elif etype == "session_roles_changed":
+            for uid in event.get("user_ids", []):
+                await cache.invalidate_user(uid)

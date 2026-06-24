@@ -5,7 +5,10 @@ import secrets
 from typing import TYPE_CHECKING, Self
 
 from backend.base.crm.attachments.models.attachments import Attachment
-from backend.base.system.dotorm.dotorm.access import get_access_session
+from backend.base.system.dotorm.dotorm.access import (
+    get_access_session,
+    SUPERUSER,
+)
 from backend.base.system.dotorm.dotorm.components.filter_parser import (
     FilterExpression,
 )
@@ -85,12 +88,24 @@ class User(PolymorphicParentMixin):
     password_hash: str = Char(max_length=256, private=True, required=False)
     password_salt: str = Char(max_length=256, private=True, required=False)
 
-    # Администратор (полный доступ ко всему)
-    is_admin: bool = Boolean(default=False)
+    # Администратор (полный доступ ко всему).
+    # role_create/role_update=SUPERUSER: ставить/снимать суперпользователя
+    # может только суперпользователь — и на создании, и на правке (в т.ч.
+    # update_bulk), которые точечный гард в User.update не покрывает.
+    # Точечные правила (нельзя снять последнего админа / себя) остаются в
+    # User.update — это уже value-level логика поверх field-level.
+    is_admin: bool = Boolean(
+        default=False, role_create=SUPERUSER, role_update=SUPERUSER
+    )
 
     image: Attachment | None = PolymorphicMany2one(relation_table=Attachment)
 
+    # role_update="system_admin": менять роли может только «Администратор
+    # настроек» (или суперпользователь — он обходит проверку). Защита от
+    # самоповышения привилегий обычным пользователем. Только update: m2m на
+    # создании не пишется (store=False, проставляется отдельным update'ом).
     role_ids: list["Role"] = Many2many(
+        role_update="system_admin",
         default=_default_roles,
         store=False,
         relation_table=lambda: env.models.role,
@@ -322,6 +337,57 @@ class User(PolymorphicParentMixin):
                     )
 
         await super().update(payload, fields, session, depends_jobs)
+
+        # Изменились authz-атрибуты (роли/суперюзер) → инвалидируем
+        # кэш сессий этого юзера через шину, чтобы воркеры пересобрали
+        # сессию со свежими ролями (а не держали устаревшие до TTL).
+        if "role_ids" in fields or "is_admin" in fields:
+            await Session.publish_roles_changed([self.id])
+
+    @hybridmethod
+    async def update_bulk(
+        self, ids: list[int], payload: "User", session=None, depends_jobs=None
+    ):
+        if "is_admin" in payload.assigned_fields():
+            auth_session = get_access_session()
+            current_user = auth_session.user_id
+
+            # Правило 1: Только админ имеет право трогать это поле
+            if not current_user.is_admin:
+                raise FaraException(
+                    {"content": "ONLY_ADMIN_CAN_CHANGE_ADMIN_FIELD"}
+                )
+        result = await super().update_bulk(ids, payload, session, depends_jobs)
+        # role_ids через bulk не идёт (store=False); is_admin — идёт.
+        if "is_admin" in payload.assigned_fields():
+            await Session.publish_roles_changed(list(ids))
+        return result
+
+    @classmethod
+    async def get_all_role_codes(cls, user_id: int) -> set[str]:
+        """Коды всех ролей пользователя, развёрнутые по based_role_ids.
+
+        Используется при сборке/кэшировании сессии (роли кладутся в
+        session.user_id.role_ids) и как fallback в field-level проверке.
+        Один рекурсивный CTE.
+        """
+        query = """
+            WITH RECURSIVE role_tree AS (
+                SELECT role_id
+                FROM user_role_many2many
+                WHERE user_id = $1
+                UNION
+                SELECT rb.based_role_id
+                FROM role_tree rt
+                JOIN role_based_many2many rb ON rb.role_id = rt.role_id
+            )
+            SELECT DISTINCT r.code
+            FROM roles r
+            JOIN role_tree t ON r.id = t.role_id
+        """
+        session = cls._get_db_session()
+        result = await session.execute(query, [user_id], cursor="fetch")
+        return {row["code"] for row in result if row.get("code")}
 
     def generate_password_hash_salt_old(self, password: str):
         return self.generate_password_hash(password, self.password_salt)

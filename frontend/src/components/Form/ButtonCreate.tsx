@@ -144,6 +144,22 @@ export function ButtonCreate({
           // console.log(valuesCreate, 'valuesCreate');
           const valuesToCreate = structuredClone(form.getValues());
 
+          // Отправляем только заданные пользователем поля (изменённые
+          // относительно дефолтов; baseline — default_values, см. Form.tsx).
+          // Незатронутые поля бэкенд заполнит дефолтами сам. `_*` (команды
+          // O2M/M2M) — change-based, оставляем. Так restricted-поля
+          // (is_admin/role_ids), которых пользователь не трогал, не уходят на
+          // бэк и не упираются в field-level проверку (presence-based).
+          for (const key of Object.keys(valuesToCreate)) {
+            if (key === 'id' || key.startsWith('_')) continue;
+            // Required-поля оставляем всегда (lang_id и т.п.) — схема create
+            // их требует, иначе 422. Неизменённый is_admin (не required, не
+            // dirty) дропается → не уходит на бэк → system_admin тоже сможет
+            // создавать юзеров без блокировки field-level проверкой.
+            if (fieldsServer[key]?.required) continue;
+            if (!form.isDirty(key)) delete valuesToCreate[key];
+          }
+
           // ВАЖНО: собираем pending O2M-изменения ДО prepareValuesToSave.
           // prepareValuesToSave мигрирует `_contact_ids` → `contact_ids`
           // и удаляет служебный префиксный ключ. Используется FieldContacts

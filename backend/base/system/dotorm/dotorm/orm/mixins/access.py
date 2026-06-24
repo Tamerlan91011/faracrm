@@ -74,3 +74,65 @@ class AccessMixin(_Base):
             return domain
 
         return filter
+
+    # =========================================================================
+    # Field-level access (третья ось: ACL=таблица, Rules=строка, тут=поле)
+    # =========================================================================
+
+    @classmethod
+    async def _check_field_access(
+        cls,
+        operation: Operation,
+        payload,
+        fields,
+    ) -> None:
+        """Проверяет право записи отдельных полей (role_*).
+
+        Защита от privilege escalation через mass-assignment: например,
+        обычный пользователь, выставляющий себе role_ids или is_admin.
+
+        Presence-based (как Odoo groups=): любое присутствие role_*-поля
+        в payload проверяется у checker'а.
+
+        КОНТРАКТ: фронт НЕ должен слать restricted-поле юзеру, который его
+        не меняет — иначе его легитимная правка будет отклонена целиком.
+        Т.к. форма сейчас шлёт is_admin при каждом сохранении, для
+        не-суперпользователя это поле надо скрывать/не отправлять
+        (UI-reflection).
+
+        Вызывается из write-пути ПОСЛЕ _check_access (ACL+Rules).
+
+        Args:
+            operation: CREATE или UPDATE (READ проверяется при выборке).
+            payload: модель с новыми значениями.
+            fields: имена назначенных полей.
+
+        Raises:
+            AccessDenied: если хотя бы одно поле запрещено для записи.
+        """
+        all_fields = cls.get_fields()
+        to_check: list[str] = []
+        for name in fields:
+            field = all_fields.get(name)
+            if field is not None and field.required_roles(operation.value):
+                to_check.append(name)
+
+        if not to_check:
+            return
+
+        session = get_access_session()
+        if session is None:
+            raise AccessDenied(
+                f"No session in DotORM context for field-level "
+                f"{operation.value} on {cls.__table__}."
+            )
+
+        checker = get_access_checker()
+        denied = await checker.check_field_access(
+            session, cls.__table__, operation, to_check
+        )
+        if denied:
+            raise AccessDenied(
+                f"No permission to set field(s) {denied} "
+                f"on {cls.__table__}"
+            )

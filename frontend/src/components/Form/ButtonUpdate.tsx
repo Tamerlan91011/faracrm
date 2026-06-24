@@ -81,6 +81,22 @@ export function ButtonUpdate({
     try {
       const values = structuredClone(form.getValues());
 
+      // Отправляем только реально изменённые поля. Скаляры/M2O — по
+      // dirty-флагу Mantine (baseline задан resetDirty при загрузке записи,
+      // см. Form.tsx). Ключи `_*` (команды M2M/O2M) уже change-based —
+      // присутствуют только при правках, оставляем как есть. Так
+      // restricted-поля (is_admin/role_ids), которых пользователь не менял,
+      // не уходят на бэк и не упираются в field-level проверку
+      // (presence-based на сервере).
+      for (const key of Object.keys(values)) {
+        if (key === 'id' || key.startsWith('_')) continue;
+        // Required-поля оставляем всегда (схема требует их → иначе 422 и
+        // фронтовая валидация). Они не restricted (is_admin/role_ids не
+        // required), так что field-level проверка не ослабляется.
+        if (fieldsServer[key]?.required) continue;
+        if (!form.isDirty(key)) delete values[key];
+      }
+
       // Собираем имена M2M/O2M полей с изменениями для инвалидации кеша
       const invalidateTags: string[] = [];
       // Связанные модели O2M/M2M, чьи данные пересчитал бэкенд

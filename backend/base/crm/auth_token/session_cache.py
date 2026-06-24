@@ -31,6 +31,10 @@ class CachedSession:
     ttl: int
     create_datetime: datetime
     revoked: bool = False
+    # Развёрнутые коды ролей (с учётом based_role_ids) — кладутся при
+    # сборке сессии, чтобы field-level проверка не ходила в БД на каждый
+    # write. Сбрасываются через invalidate_user при смене ролей.
+    role_codes: tuple[str, ...] = ()
 
 
 class SessionCache:
@@ -48,7 +52,22 @@ class SessionCache:
         self._by_token: dict[str, CachedSession] = {}
         self._by_cookie: dict[str, CachedSession] = {}
         self._by_session_id: dict[int, CachedSession] = {}
+        # user_id → set(session_id): чтобы по смене ролей сбросить ВСЕ
+        # сессии пользователя (у юзера их может быть несколько).
+        self._by_user_id: dict[int, set[int]] = {}
         self._lock = asyncio.Lock()
+
+    def _index_user(self, cached: CachedSession) -> None:
+        if cached.user_id not in self._by_user_id:
+            self._by_user_id[cached.user_id] = set()
+        self._by_user_id[cached.user_id].add(cached.session_id)
+
+    def _unindex_user(self, cached: CachedSession) -> None:
+        sids = self._by_user_id.get(cached.user_id)
+        if sids is not None:
+            sids.discard(cached.session_id)
+            if not sids:
+                self._by_user_id.pop(cached.user_id, None)
 
     async def get_by_token(self, token: str) -> CachedSession | None:
         async with self._lock:
@@ -77,6 +96,7 @@ class SessionCache:
             if cached.cookie_token:
                 self._by_cookie[cached.cookie_token] = cached
             self._by_session_id[cached.session_id] = cached
+            self._index_user(cached)
 
     async def revoke(self, session_id: int) -> str | None:
         """
@@ -92,6 +112,7 @@ class SessionCache:
                 self._by_token.pop(cached.token, None)
             if cached.cookie_token:
                 self._by_cookie.pop(cached.cookie_token, None)
+            self._unindex_user(cached)
             logger.debug("SessionCache: session %s revoked", session_id)
             return cached.token
 
@@ -102,12 +123,45 @@ class SessionCache:
                 self._by_session_id.pop(cached.session_id, None)
                 if cached.cookie_token:
                     self._by_cookie.pop(cached.cookie_token, None)
+                self._unindex_user(cached)
+
+    async def invalidate_user(self, user_id: int) -> list[str]:
+        """
+        Сбросить кэш ВСЕХ сессий пользователя (НЕ revoke).
+
+        В отличие от revoke (logout) — просто удаляет записи из кэша, не
+        помечая revoked. Следующий запрос промахнётся мимо кэша и
+        пересоберёт сессию из БД уже со свежими ролями. Вызывается из
+        pg_notify-обработчика при смене role_ids/is_admin/иерархии.
+
+        Returns: список token'ов сброшенных сессий (для опц. WS-нужд).
+        """
+        async with self._lock:
+            sids = self._by_user_id.pop(user_id, set())
+            tokens: list[str] = []
+            for sid in list(sids):
+                cached = self._by_session_id.pop(sid, None)
+                if cached is None:
+                    continue
+                if cached.token:
+                    self._by_token.pop(cached.token, None)
+                    tokens.append(cached.token)
+                if cached.cookie_token:
+                    self._by_cookie.pop(cached.cookie_token, None)
+            if sids:
+                logger.debug(
+                    "SessionCache: invalidated %s sessions of user %s",
+                    len(sids),
+                    user_id,
+                )
+            return tokens
 
     async def clear(self) -> None:
         async with self._lock:
             self._by_token.clear()
             self._by_cookie.clear()
             self._by_session_id.clear()
+            self._by_user_id.clear()
 
     def size(self) -> int:
         return len(self._by_session_id)

@@ -84,6 +84,14 @@ class Field[FieldType]:
     relation_table_field: str | None = None
     _relation_table: Type["DotModel"] | None = None
 
+    # Field-level access (см. required_roles). Карта операция → коды ролей,
+    # которым разрешена операция над полем. Пусто = без ограничений.
+    # Заполняется из kwargs role_read/role_create/role_update.
+    _role_acl: dict[str, list[str]] = {}
+    # Операции, к которым применим field-level доступ (= Operation.value
+    # без DELETE — удаляют запись, не поле).
+    _ROLE_OPS = ("read", "create", "update")
+
     def __init__(self, **kwargs: Any) -> None:
         # schema_required - переопределяет обязательность в API схеме
         self.schema_required = kwargs.pop("schema_required", None)
@@ -126,9 +134,39 @@ class Field[FieldType]:
             is_nullable = kwargs.get("null", self.null)
             self.ondelete = "set null" if is_nullable else "restrict"
 
+        # Field-level access: role_read / role_create / role_update — строка
+        # кодов ролей через запятую ("system_admin" или "admin,manager"),
+        # каждый атрибут бьёт строго в свою операцию. Токен SUPERUSER —
+        # «только суперпользователь». Парсим (и pop'аем) ДО общего
+        # setattr-цикла ниже, иначе осели бы мусорными атрибутами.
+        self._role_acl = self._parse_role_acl(kwargs)
+
         for name, value in kwargs.items():
             setattr(self, name, value)
         self.validation()
+
+    def _parse_role_acl(self, kwargs: dict) -> dict[str, list[str]]:
+        """role_<op> (строка кодов через запятую) → {операция: [коды]}.
+
+        Каждый атрибут идёт строго в свою операцию (read/create/update).
+        Токен SUPERUSER означает «только суперпользователь».
+        """
+        acl: dict[str, list[str]] = {}
+        for op in self._ROLE_OPS:
+            raw = kwargs.pop(f"role_{op}", None)
+            if raw:
+                acl[op] = [c.strip() for c in raw.split(",") if c.strip()]
+        return acl
+
+    def required_roles(self, operation: str) -> list[str] | None:
+        """Коды ролей, которым разрешена операция над полем, либо None.
+
+        None = поле без field-level ограничений на эту операцию.
+        Зарезервированный код SUPERUSER (см. access.SUPERUSER) трактуется
+        слоем security как «только is_admin». operation: 'read'|'create'|
+        'update' (= Operation.value).
+        """
+        return self._role_acl.get(operation)
 
     # обман тайп чекера.
     def __new__(cls, *args: Any, **kwargs: Any) -> FieldType:

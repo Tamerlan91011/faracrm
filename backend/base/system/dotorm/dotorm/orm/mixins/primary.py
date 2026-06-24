@@ -142,6 +142,10 @@ class OrmPrimaryMixin(_Base):
         if not fields:
             return
 
+        # Field-level доступ: запрет писать role_*-поля без нужной роли
+        # (presence-based — любое присутствие restricted-поля проверяется).
+        await self._check_field_access(Operation.UPDATE, payload, fields)
+
         depends_jobs, owner = self._depends_open(depends_jobs)
 
         # SQL UPDATE для store-полей + обработка relation-полей.
@@ -217,6 +221,13 @@ class OrmPrimaryMixin(_Base):
 
         # Одна проверка для всех ID
         await cls._check_access(Operation.UPDATE, record_ids=ids)
+
+        # Field-level доступ (presence-based). is_admin через bulk
+        # проверяется; role_ids не идёт (store=False). Закрывает дыру,
+        # которой точечный гард в User.update не покрывал bulk-путь.
+        await cls._check_field_access(
+            Operation.UPDATE, payload, payload.assigned_fields()
+        )
 
         session = cls._get_db_session(session)
         depends_jobs, owner = cls._depends_open(depends_jobs)
@@ -302,6 +313,14 @@ class OrmPrimaryMixin(_Base):
 
         # Проверяем table access до создания
         await cls._check_access(Operation.CREATE)
+
+        # Field-level доступ на КЛИЕНТСКИ назначенных полях — ДО _apply_defaults.
+        # Важно при presence-based: иначе подставленный дефолт (is_admin=False)
+        # попал бы в assigned_fields и проверка отклонила бы ЛЮБОЕ создание
+        # не-суперпользователем.
+        await cls._check_field_access(
+            Operation.CREATE, payload, payload.assigned_fields()
+        )
 
         session = cls._get_db_session(session)
 

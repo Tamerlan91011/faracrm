@@ -35,6 +35,13 @@ class Operation(StrEnum):
 BYPASS_DOMAIN = []
 BYPASS_DOMAIN_LEGACY = [["id", "!=", None]]
 
+# Зарезервированный токен для field-level доступа (атрибуты role_* на полях,
+# см. fields.Field.required_roles). Означает «писать/читать это поле может
+# только суперпользователь». Конкретную трактовку даёт SecurityAccessChecker:
+# для FARA это session.user_id.is_admin. Это НЕ код реальной роли —
+# подобрано так, чтобы не пересекаться с code в таблице roles.
+SUPERUSER = "__superuser__"
+
 # Generic тип для Session
 TSession = TypeVar("TSession")
 
@@ -106,6 +113,36 @@ class AccessChecker(Generic[TSession]):
         Возвращает domain-фильтр для ограничения выборки.
 
         Используется для search — добавляется к filter ДО запроса.
+        """
+        return []
+
+    async def check_field_access(
+        self,
+        session: TSession,
+        model: str,
+        operation: Operation,
+        field_names: list[str],
+    ) -> list[str]:
+        """
+        Field-level доступ: какие из переданных полей роль НЕ вправе писать.
+
+        Это третья ось контроля доступа (помимо ACL=таблица и Rules=строка):
+        ограничение на уровне отдельных полей записи. Используется против
+        privilege escalation через mass-assignment — например, обычный
+        пользователь, выставляющий себе role_ids или is_admin.
+
+        Вызывается из write-пути (create/update/update_bulk) уже ПОСЛЕ
+        ACL/Rules и только для полей, которые реально меняются и помечены
+        атрибутом role_* (фильтрацию «меняется/помечено» делает вызывающий
+        слой ORM, у которого есть и payload, и текущее значение).
+
+        Args:
+            field_names: поля-кандидаты (уже отобранные как меняющиеся
+                и role_*-ограниченные).
+
+        Returns:
+            Список полей, запрещённых для записи этой сессией. Пустой —
+            всё разрешено. База разрешает всё; политику задаёт security.
         """
         return []
 

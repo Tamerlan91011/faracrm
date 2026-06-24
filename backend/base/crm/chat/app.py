@@ -99,8 +99,20 @@ class ChatApp(Service):
         # Устанавливаем backend в chat_manager
         self.chat_manager.set_pubsub(backend)
 
-        # Запускаем listener — каждый event будет обработан chat_manager
-        await backend.start_listening(self.chat_manager.handle_pubsub_event)
+        # Один listener на канал ws_events — диспетчеризуем по типу:
+        # auth-события (session_revoked / session_roles_changed) идут в
+        # SessionCache через Session.handle_pubsub_event, остальное — в
+        # chat_manager. Так logout/revoke и смена ролей доходят до ВСЕХ
+        # воркеров (раньше session_revoked публиковался, но потребителя
+        # на шине не было).
+        async def _bus_dispatch(event: dict):
+            etype = event.get("type")
+            if etype in ("session_revoked", "session_roles_changed"):
+                await env.models.session.handle_pubsub_event(event)
+            else:
+                await self.chat_manager.handle_pubsub_event(event)
+
+        await backend.start_listening(_bus_dispatch)
 
         logger.info(
             "ChatApp: pub/sub started (backend=%s) — "

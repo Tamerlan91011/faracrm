@@ -10,6 +10,7 @@ from backend.base.system.core.enviroment import Environment
 from backend.base.system.dotorm.dotorm.access import (
     BYPASS_DOMAIN,
     BYPASS_DOMAIN_LEGACY,
+    SUPERUSER,
     AccessChecker,
     Operation,
 )
@@ -101,6 +102,73 @@ class SecurityAccessChecker(AccessChecker["Session"]):
             return has_rules, []
 
         return True, domain
+
+    async def check_field_access(
+        self,
+        session: "Session",
+        model: str,
+        operation: Operation,
+        field_names: list[str],
+    ) -> list[str]:
+        """
+        Field-level доступ: какие поля сессия НЕ вправе писать.
+
+        Третья ось доступа (ACL=таблица, Rules=строка, тут=поле). Вызывается
+        из ORM write-пути уже после ACL/Rules и только для меняющихся
+        role_*-полей (отбор делает ORM). Здесь — только проверка роли.
+
+        Правила role_* трактуются так:
+        - токен SUPERUSER → разрешено только is_admin (полный доступ уже
+          отсечён выше, значит для остальных — запрет);
+        - иначе у пользователя должна быть хотя бы одна из перечисленных
+          ролей (по code, с учётом наследования based_role_ids).
+
+        Returns:
+            Список запрещённых полей (пустой = всё можно).
+        """
+        # admin / SystemSession — полный доступ, поля не ограничиваем.
+        if self._is_full_access(session):
+            return []
+
+        # AnonymousSession не пишет ничего (сюда обычно и не доходит, но
+        # на всякий случай запрещаем все кандидаты явно).
+        if isinstance(session, AnonymousSession):
+            return list(field_names)
+
+        model_name = self.env.models._get_model_name_by_table(model)
+        Model = self.env.models._get_model(model_name)
+        if Model is None:
+            return []
+
+        all_fields = Model.get_fields()
+        # Коды ролей берём из самой сессии (кладутся развёрнутыми при
+        # сборке/кэшировании сессии — горячий путь без запроса в БД).
+        # role_ids может быть None у негидратированных сессий (cookie-auth,
+        # внутренний код) → трактуем как «нет ролей»: restricted-поля будут
+        # запрещены, но без падения (иначе TypeError на итерации None).
+        user_codes = {
+            r.code for r in (session.user_id.role_ids or []) if r.code
+        }
+        denied: list[str] = []
+
+        for name in field_names:
+            field = all_fields.get(name)
+            if field is None:
+                continue
+            required = field.required_roles(operation.value)
+            if not required:
+                continue
+
+            req_codes = set(required) - {SUPERUSER}
+            if not req_codes:
+                # Поле только для суперпользователя, а мы уже не admin.
+                denied.append(name)
+                continue
+
+            if not (req_codes & (user_codes or set())):
+                denied.append(name)
+
+        return denied
 
     # =========================================================================
     # Private: базовые проверки
