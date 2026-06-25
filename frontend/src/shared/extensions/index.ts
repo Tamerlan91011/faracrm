@@ -64,11 +64,31 @@ export function registerExtension(
   }
 
   const list = registry.get(model)!;
-  const extName = extension.displayName || extension.name;
+  // Дедуп по ССЫЛКЕ на компонент + позиция, а НЕ по имени функции.
+  //
+  // В прод-сборке esbuild минифицирует каждый ленивый чанк независимо, и
+  // экспортируемые компоненты в разных модулях получают одинаковые короткие
+  // имена (напр. ViewFormConnectorAvito и ViewFormConnectorMaxBusiness оба
+  // становятся `function x(){}` -> .name === "x"). При сравнении по имени
+  // второе расширение на той же позиции считалось дубликатом и молча
+  // выбрасывалось — поэтому в проде у одних коннекторов пропадали поля
+  // (connection у max_business, webhooks у max_bot и т.п.), а в dev (без
+  // минификации) всё работало. Сравнение по ссылке устойчиво к минификации.
+  //
+  // В dev дополнительно дедупим по имени: при Fast Refresh модуль расширения
+  // переисполняется и создаёт НОВУЮ ссылку на функцию — иначе расширение
+  // зарегистрировалось бы повторно и отрендерилось дважды. В dev имена не
+  // минифицированы, так что это безопасно. В проде модули — синглтоны,
+  // повторной регистрации не бывает, поэтому имя там не нужно.
+  const sameName = (a: ComponentType<any>, b: ComponentType<any>): boolean => {
+    const an = a.displayName || a.name;
+    return !!an && an === (b.displayName || b.name);
+  };
   const exists = list.some(
     e =>
-      (e.component.displayName || e.component.name) === extName &&
-      e.position === position,
+      e.position === position &&
+      (e.component === extension ||
+        (import.meta.env.DEV && sameName(e.component, extension))),
   );
 
   if (!exists) {
