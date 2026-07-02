@@ -282,3 +282,14 @@ class WebSocketPresence(BaseModel):
     user_id: int
     status: str  # online/offline
     timestamp: datetime
+
+
+# ====================== PIN SCHEMA ======================
+# Папки чатов управляются через auto-CRUD (/auto/chat_folder) — отдельных
+# folder-схем/роутера нет. Здесь остаётся только действие закрепления чата.
+
+
+class ChatPin(BaseModel):
+    """Schema for pinning/unpinning a chat for the current user."""
+
+    pinned: bool = Field(..., description="Pin status")

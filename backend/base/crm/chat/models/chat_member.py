@@ -66,6 +66,12 @@ class ChatMember(AuditMixin, MemberMixin):
         description="ID последнего прочитанного сообщения (watermark)",
     )
 
+    # Закрепление чата — per-user состояние (как и watermark). Закреплённые
+    # чаты идут сверху списка getChats. У партнёров-участников не используется.
+    is_pinned: bool = Boolean(
+        default=False, description="Чат закреплён пользователем"
+    )
+
     # Поскольку роутеры используют эти имена в 15+ местах, сохраняем их
     # как тонкие обёртки над check_permission().
     # TODO: удалить и использовать стандартный метод из миксина

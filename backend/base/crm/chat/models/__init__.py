@@ -10,6 +10,7 @@ from .chat_external_account import ChatExternalAccount
 from .chat_external_chat import ChatExternalChat
 from .chat_external_message import ChatExternalMessage
 from .chat_routing_rule_lead import ChatRoutingRuleLead
+from .chat_folder import ChatFolder
 
 __all__ = [
     "Chat",
@@ -21,4 +22,5 @@ __all__ = [
     "ChatExternalChat",
     "ChatExternalMessage",
     "ChatRoutingRuleLead",
+    "ChatFolder",
 ]

@@ -1,9 +1,12 @@
 {
   "menu": {
     "chat_connector": "Коннекторы",
+    "chat_folder": "Папки",
     "chat_external_account": "Внешние аккаунты",
     "chat_external_chat": "Внешние чаты",
-    "chat_external_message": "Внешние сообщения"
+    "chat_external_message": "Внешние сообщения",
+    "folders": "Папки",
+    "newFolder": "Новая папка"
   },
   "chats": "Чаты",
   "newChat": "Новый чат",
@@ -349,5 +352,15 @@
   "listSettings": "Настройки списка",
   "showDeletedChats": "Показывать удалённые чаты",
   "showRecordChats": "Показывать record-чаты",
-  "showForeignChats": "Показывать чужие чаты"
+  "showForeignChats": "Показывать чужие чаты",
+  "external": "Внешние",
+  "unreadChats": "Непрочитанные",
+  "newFolder": "Новая папка",
+  "editFolder": "Изменить папку",
+  "folderName": "Название папки",
+  "folderNamePlaceholder": "Например: Работа",
+  "allFolderHint": "Папка «Все» показывает все чаты — её правила не редактируются.",
+  "chatsByType": "Чаты по типу",
+  "specificChats": "Конкретные чаты",
+  "selectChats": "Выберите чаты"
 }

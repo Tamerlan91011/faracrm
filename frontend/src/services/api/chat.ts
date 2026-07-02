@@ -15,6 +15,7 @@ const chatApi = api.injectEndpoints({
           }),
           ...(args?.chat_type && { chat_type: args.chat_type }),
           ...(args?.connector_type && { connector_type: args.connector_type }),
+          ...(args?.folder_id !== undefined && { folder_id: args.folder_id }),
           ...(args?.include_deleted && { include_deleted: 1 }),
           ...(args?.include_record && { include_record: 1 }),
           ...(args?.include_foreign && { include_foreign: 1 }),
@@ -656,6 +657,8 @@ export interface Chat {
   last_message?: ChatLastMessage;
   unread_count: number;
   connectors: ChatConnector[];
+  /** Закреплён ли чат текущим пользователем (per-user). */
+  is_pinned?: boolean;
   // Default permissions
   default_can_read?: boolean;
   default_can_write?: boolean;
@@ -721,6 +724,8 @@ export interface GetChatsArgs {
   is_internal?: boolean;
   chat_type?: 'direct' | 'group';
   connector_type?: string;
+  /** Фильтр по папке чатов пользователя (chat_folder.id). */
+  folder_id?: number;
   include_deleted?: boolean;
   include_record?: boolean;
   /** Admin-only: показать чужие чаты (где user не мембер). */
@@ -907,7 +912,50 @@ const recordChatApi = api.injectEndpoints({
   overrideExisting: false,
 });
 
-export { chatApi, recordChatApi };
+// ====================== CHAT FOLDERS + PIN ======================
+//
+// Папки чатов управляются через ОБЩИЙ auto-CRUD (/auto/chat_folder/*) —
+// используем crudApi (useSearchQuery/useCreateMutation/useUpdateMutation/
+// useDeleteBulkMutation) с model: 'chat_folder'. Отдельного folder-API нет.
+// Здесь остаётся только НЕ-CRUD действие — закрепление чата.
+
+/** Папка чатов = сохранённый domain-фильтр над chat (см. backend chat_folder). */
+export interface ChatFolder {
+  id: number;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  sequence: number;
+  /** NULL = глобальная папка (Все/Личные/Группы/коннектор), видна всем. */
+  user_id?: { id: number; name?: string } | number | null;
+  /** all | direct | group — у встроенных глобальных папок. */
+  kind?: string | null;
+  /** FK на коннектор — у глобальной папки коннектора. */
+  connector_id?: { id: number; name?: string } | number | null;
+  /** FARA-домен над chat: [["chat_type","=","direct"], "or", ["id","in",[...]]]. */
+  domain?: unknown[] | Record<string, unknown> | null;
+}
+
+const folderApi = api.injectEndpoints({
+  endpoints: build => ({
+    // Закрепить/открепить чат (per-user). Инвалидируем список → пересортировка.
+    pinChat: build.mutation<
+      { success: boolean; is_pinned: boolean },
+      { chatId: number; pinned: boolean }
+    >({
+      query: ({ chatId, pinned }) => ({
+        url: `/chats/${chatId}/pin`,
+        method: 'POST',
+        body: { pinned },
+      }),
+      invalidatesTags: [{ type: 'Chat', id: 'LIST' }],
+    }),
+  }),
+  overrideExisting: false,
+});
+
+export { chatApi, recordChatApi, folderApi };
+export const { usePinChatMutation } = folderApi;
 export const {
   useGetChatsQuery,
   useGetChatQuery,

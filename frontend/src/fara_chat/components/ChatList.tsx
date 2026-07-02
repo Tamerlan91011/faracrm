@@ -23,11 +23,18 @@ import {
   IconMessage,
   IconDotsVertical,
   IconAdjustments,
+  IconPin,
+  IconPinnedOff,
 } from '@tabler/icons-react';
 import { ViewSettingsPopover, ViewSettingsOption } from './ViewSettingsPopover';
 import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
-import { useGetChatsQuery, Chat, ChatLastMessage } from '@/services/api/chat';
+import {
+  useGetChatsQuery,
+  usePinChatMutation,
+  Chat,
+  ChatLastMessage,
+} from '@/services/api/chat';
 import { attachmentPreviewUrl } from '@/utils/attachmentUrls';
 import styles from './ChatList.module.css';
 
@@ -85,6 +92,7 @@ interface ChatFilter {
   is_internal?: boolean;
   chat_type?: 'direct' | 'group';
   connector_type?: string;
+  folder_id?: number;
 }
 
 interface ChatListProps {
@@ -160,6 +168,7 @@ export function ChatList({
       is_internal?: boolean;
       chat_type?: string;
       connector_type?: string;
+      folder_id?: number;
       include_deleted?: boolean;
       include_record?: boolean;
       include_foreign?: boolean;
@@ -168,6 +177,7 @@ export function ChatList({
     if (filter.chat_type !== undefined) args.chat_type = filter.chat_type;
     if (filter.connector_type !== undefined)
       args.connector_type = filter.connector_type;
+    if (filter.folder_id !== undefined) args.folder_id = filter.folder_id;
     if (showDeletedChats) args.include_deleted = true;
     if (showRecordChats) args.include_record = true;
     if (showForeignChats) args.include_foreign = true;
@@ -176,12 +186,21 @@ export function ChatList({
     filter.is_internal,
     filter.chat_type,
     filter.connector_type,
+    filter.folder_id,
     showDeletedChats,
     showRecordChats,
     showForeignChats,
   ]);
 
   const { data, isLoading, error, refetch } = useGetChatsQuery(queryArgs);
+  const [pinChat] = usePinChatMutation();
+
+  // Закрепить/открепить чат. stopPropagation в обработчиках меню не даёт
+  // клику выбрать чат — здесь просто шлём мутацию (список пересортируется
+  // на бэке после инвалидации Chat LIST).
+  const togglePin = (chat: Chat) => {
+    pinChat({ chatId: chat.id, pinned: !chat.is_pinned });
+  };
 
   // Передаём refetch наверх при монтировании
   useMemo(() => {
@@ -395,15 +414,47 @@ export function ChatList({
                   {getChatIcon(chat)}
 
                   <Box style={{ flex: 1, overflow: 'hidden' }}>
-                    <Group justify="space-between" wrap="nowrap">
+                    <Group justify="space-between" wrap="nowrap" gap={4}>
                       <Text fw={500} truncate style={{ flex: 1 }}>
                         {getDisplayName(chat)}
                       </Text>
+                      {chat.is_pinned && (
+                        <IconPin
+                          size={14}
+                          color="var(--mantine-color-gray-5)"
+                          title={t('pinned')}
+                        />
+                      )}
                       <Text size="xs" c="dimmed">
                         {formatTime(
                           chat.last_message_date || chat.create_datetime,
                         )}
                       </Text>
+                      <Menu position="bottom-end" withinPortal shadow="md">
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            size="sm"
+                            title={t('options')}
+                            onClick={e => e.stopPropagation()}>
+                            <IconDotsVertical size={14} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown onClick={e => e.stopPropagation()}>
+                          <Menu.Item
+                            leftSection={
+                              chat.is_pinned ? (
+                                <IconPinnedOff size={16} />
+                              ) : (
+                                <IconPin size={16} />
+                              )
+                            }
+                            onClick={() => togglePin(chat)}>
+                            {chat.is_pinned ? t('unpin') : t('pin')}
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
                     </Group>
 
                     <Group justify="space-between" wrap="nowrap">

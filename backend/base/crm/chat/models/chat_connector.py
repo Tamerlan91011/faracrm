@@ -276,6 +276,16 @@ class ChatConnector(AuditMixin, DotModel):
         # Создаём outbox-аккаунт (обязательно, если задан external_account_id)
         await self._ensure_outbox_account()
 
+        # Авто-папка коннектора: ОДНА глобальная папка на коннектор
+        # (user_id IS NULL, видна всем). Никакого per-manager цикла — нет N+1
+        # и нет дублей по пользователям. Idempotent по connector_id.
+        try:
+            await env.models.chat_folder.ensure_connector_folder(
+                self.id, self.name
+            )
+        except Exception as e:
+            logger.warning("connector folder seeding skipped: %s", e)
+
         return self.id
 
     @hybridmethod

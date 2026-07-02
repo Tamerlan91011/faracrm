@@ -1,9 +1,12 @@
 {
   "menu": {
     "chat_connector": "Connectors",
+    "chat_folder": "Folders",
     "chat_external_account": "External Accounts",
     "chat_external_chat": "External Chats",
-    "chat_external_message": "External Messages"
+    "chat_external_message": "External Messages",
+    "folders": "Folders",
+    "newFolder": "New folder"
   },
   "chats": "Chats",
   "newChat": "New Chat",
@@ -349,5 +352,15 @@
   "listSettings": "List settings",
   "showDeletedChats": "Show deleted chats",
   "showRecordChats": "Show record chats",
-  "showForeignChats": "Show others' chats"
+  "showForeignChats": "Show others' chats",
+  "external": "External",
+  "unreadChats": "Unread",
+  "newFolder": "New folder",
+  "editFolder": "Edit folder",
+  "folderName": "Folder name",
+  "folderNamePlaceholder": "e.g. Work",
+  "allFolderHint": "The \"All\" folder shows every chat — its rules can't be edited.",
+  "chatsByType": "Chats by type",
+  "specificChats": "Specific chats",
+  "selectChats": "Select chats"
 }

@@ -1,113 +1,104 @@
-import { useMemo } from 'react';
-import { Stack, Text, UnstyledButton, Group, Divider } from '@mantine/core';
+import { useMemo, useState } from 'react';
+import {
+  Stack,
+  Text,
+  UnstyledButton,
+  Group,
+  ActionIcon,
+  Menu,
+} from '@mantine/core';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   IconMessage,
   IconUsers,
-  IconWorld,
+  IconFolder,
+  IconPlus,
+  IconDotsVertical,
+  IconPencil,
+  IconTrash,
   IconBrandTelegram,
   IconBrandWhatsapp,
   IconMail,
   IconMessageCircle,
 } from '@tabler/icons-react';
-import { useGetMyConnectorsQuery } from '@/services/api/chat';
+import {
+  useSearchQuery,
+  useDeleteBulkMutation,
+} from '@/services/api/crudApi';
+import { ChatFolder } from '@/services/api/chat';
+import { FolderModal } from '@/fara_chat/components/FolderModal';
+import avitoIconUrl from '@/fara_chat_avito/assets/avito.svg';
 import { MaxIcon } from '@/fara_chat_max_bot/components/MaxIcon';
 import classes from './ChatSidebar.module.css';
 
-// ─── Цветовая карта коннекторов ─────────────────────────────────────────────
-// connector.type → иконка + CSS-переменные для light-темы.
-// Dark-тема обрабатывается в CSS через @mixin dark (осветлённые варианты).
-// Добавил новый тип коннектора? Добавь 1 запись сюда.
+// Папки чатов = записи модели chat_folder (общий auto-CRUD). Правила доступа
+// на бэке отдают свои + глобальные (user_id IS NULL) папки:
+//   • обычные — «Все»/«Личные»/«Группы» (kind) + пользовательские (свои);
+//   • коннекторные — по одной на коннектор (connector_id) → отдельная секция
+//     «Внешние», имя и иконка берутся у самого коннектора (резолв на фронте).
 
-interface ConnectorTheme {
-  icon: React.ComponentType<{ size?: number }>;
-  color: string; // основной цвет иконки
-  activeBg: string; // фон при active
-  activeText: string; // текст при active
-}
+const AvitoIcon = () => (
+  <img
+    src={avitoIconUrl}
+    width={18}
+    height={18}
+    alt="Avito"
+    draggable={false}
+    style={{ display: 'block' }}
+  />
+);
 
-const CONNECTOR_THEME: Record<string, ConnectorTheme> = {
-  telegram: {
-    icon: IconBrandTelegram,
-    color: '#0088cc',
-    activeBg: 'rgba(0, 136, 204, 0.1)',
-    activeText: '#006699',
-  },
-  whatsapp: {
-    icon: IconBrandWhatsapp,
-    color: '#25d366',
-    activeBg: 'rgba(37, 211, 102, 0.1)',
-    activeText: '#128c44',
-  },
-  email: {
-    icon: IconMail,
-    color: '#f59e0b',
-    activeBg: 'rgba(245, 158, 11, 0.1)',
-    activeText: '#b45309',
-  },
-  max_bot: {
-    icon: MaxIcon,
-    color: '#8E5BFF',
-    activeBg: 'rgba(142, 91, 255, 0.1)',
-    activeText: '#6E3FE0',
-  },
-  // max_wamm: {
-  //   icon: MaxIcon,
-  //   color: '#8E5BFF',
-  //   activeBg: 'rgba(142, 91, 255, 0.1)',
-  //   activeText: '#6E3FE0',
-  // },
-  max_business: {
-    icon: MaxIcon,
-    color: '#8E5BFF',
-    activeBg: 'rgba(142, 91, 255, 0.1)',
-    activeText: '#6E3FE0',
-  },
+// Иконки по типу коннектора — те же, что в ConnectorFilter/у самих коннекторов.
+const CONNECTOR_ICONS: Record<string, React.ReactNode> = {
+  telegram: <IconBrandTelegram size={18} />,
+  whatsapp: <IconBrandWhatsapp size={18} />,
+  whatsapp_chatapp: <IconBrandWhatsapp size={18} />,
+  email: <IconMail size={18} />,
+  avito: <AvitoIcon />,
+  max_bot: <MaxIcon />,
+  max_business: <MaxIcon />,
 };
 
-// Фоллбэк — нейтральный серый для неизвестных типов
-const DEFAULT_THEME: Omit<ConnectorTheme, 'icon'> = {
-  color: '#6b7280',
-  activeBg: 'rgba(107, 114, 128, 0.08)',
-  activeText: '#374151',
-};
-
-// ─── Статические пункты (внутренние) ────────────────────────────────────────
-
-interface StaticItem {
-  id: string;
-  labelKey: string;
-  fallback: string;
-  to: string;
-  icon: React.ComponentType<{ size?: number }>;
-}
-
-const INTERNAL_ITEMS: StaticItem[] = [
-  {
-    id: 'all_internal',
-    labelKey: 'chat:menu.allInternal',
-    fallback: 'Все',
-    to: '/chat?is_internal=true',
-    icon: IconMessage,
-  },
-  {
-    id: 'direct',
-    labelKey: 'chat:menu.direct',
-    fallback: 'Личные',
-    to: '/chat?is_internal=true&chat_type=direct',
-    icon: IconMessage,
-  },
-  {
-    id: 'groups',
-    labelKey: 'chat:menu.groups',
-    fallback: 'Группы',
-    to: '/chat?is_internal=true&chat_type=group',
-    icon: IconUsers,
-  },
+const FOLDER_FIELDS = [
+  'id',
+  'name',
+  'icon',
+  'color',
+  'sequence',
+  'domain',
+  'kind',
+  'connector_id',
+  'user_id',
 ];
 
-// ─── Компонент ──────────────────────────────────────────────────────────────
+// Глобальная папка = без владельца (user_id NULL). Many2one приходит как
+// объект {id,...} или null.
+function isGlobal(f: any): boolean {
+  const u = f?.user_id;
+  return u == null || (typeof u === 'object' && u.id == null);
+}
+
+// id коннектора из Many2one поля (объект {id,name} или голый id).
+function connectorId(f: any): number | null {
+  const c = f?.connector_id;
+  if (c == null) return null;
+  return typeof c === 'object' ? c.id ?? null : c;
+}
+
+// Иконка обычной (не коннекторной) папки.
+function builtinIcon(f: any): React.ReactNode {
+  switch (f?.kind) {
+    case 'group':
+      return <IconUsers size={18} />;
+    case 'all':
+    case 'direct':
+    case 'internal':
+      return <IconMessage size={18} />;
+    default:
+      return <IconFolder size={18} />;
+  }
+}
 
 export function ChatSidebar() {
   const { t } = useTranslation();
@@ -115,129 +106,153 @@ export function ChatSidebar() {
   const location = useLocation();
   const currentPath = location.pathname + location.search;
 
-  // Динамически загружаем коннекторы текущего пользователя
-  const { data: connectorsData } = useGetMyConnectorsQuery();
+  const { data } = useSearchQuery({
+    model: 'chat_folder',
+    fields: FOLDER_FIELDS,
+    filter: [],
+    limit: 100,
+  });
+  // Коннекторы (через общий auto-CRUD /auto/chat_connector) — резолвим имя
+  // и тип (для иконки) папки коннектора. GET /connectors на бэке нет.
+  const { data: connectorsData } = useSearchQuery({
+    model: 'chat_connector',
+    fields: ['id', 'type', 'name'],
+    filter: [],
+    limit: 200,
+  });
+  const [deleteBulk] = useDeleteBulkMutation();
 
-  // Группируем по типу (2 telegram-коннектора → 1 пункт «Telegram»)
-  const externalItems = useMemo(() => {
-    if (!connectorsData?.data) return [];
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editing, setEditing] = useState<ChatFolder | null>(null);
 
-    const seen = new Map<string, string>();
-    for (const c of connectorsData.data) {
-      if (!seen.has(c.type)) {
-        seen.set(c.type, c.name);
-      }
+  const connMap = useMemo(() => {
+    const m = new Map<number, { type: string; name: string }>();
+    for (const c of ((connectorsData?.data as unknown) as any[]) || []) {
+      m.set(c.id, { type: c.type, name: c.name });
     }
-
-    return Array.from(seen, ([type, name]) => ({
-      id: type,
-      type,
-      labelKey: `chat:menu.${type}`,
-      fallback: name || type.charAt(0).toUpperCase() + type.slice(1),
-      to: `/chat?is_internal=false&connector_type=${type}`,
-    }));
+    return m;
   }, [connectorsData]);
 
-  const hasExternal = externalItems.length > 0;
+  const allFolders = useMemo(
+    () =>
+      [...(((data?.data as unknown) as any[]) || [])].sort(
+        (a, b) => (a.sequence || 0) - (b.sequence || 0),
+      ),
+    [data],
+  );
+
+  // Разделяем на обычные и коннекторные (как раньше внутренние / внешние).
+  const regularFolders = allFolders.filter(f => !connectorId(f));
+  const connectorFolders = allFolders.filter(f => connectorId(f));
+
+  const openCreate = () => {
+    setEditing(null);
+    setModalOpen(true);
+  };
+  const openEdit = (f: any) => {
+    setEditing(f);
+    setModalOpen(true);
+  };
+  const handleDelete = (f: any) => {
+    deleteBulk({ model: 'chat_folder', ids: [f.id] });
+    if (currentPath === `/chat?folder_id=${f.id}`) navigate('/chat');
+  };
+
+  const renderFolder = (
+    folder: any,
+    iconNode: React.ReactNode,
+    label: string,
+  ) => {
+    const to = `/chat?folder_id=${folder.id}`;
+    const active = currentPath === to;
+    // Меню (изменить/удалить) только у своих папок; глобальные — без меню.
+    const editable = !isGlobal(folder);
+
+    return (
+      <Group key={folder.id} gap={2} wrap="nowrap">
+        <UnstyledButton
+          className={`${classes.item} ${classes.internal}`}
+          data-active={active || undefined}
+          style={{ flex: 1 }}
+          onClick={() => navigate(to)}>
+          <Group gap="sm" wrap="nowrap">
+            {iconNode}
+            <Text size="sm" fw={active ? 600 : 400} truncate>
+              {label}
+            </Text>
+          </Group>
+        </UnstyledButton>
+
+        {editable && (
+          <Menu position="bottom-end" withinPortal shadow="md">
+            <Menu.Target>
+              <ActionIcon variant="subtle" color="gray" size="sm">
+                <IconDotsVertical size={14} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>
+              <Menu.Item
+                leftSection={<IconPencil size={14} />}
+                onClick={() => openEdit(folder)}>
+                {t('chat:edit', 'Изменить')}
+              </Menu.Item>
+              <Menu.Item
+                color="red"
+                leftSection={<IconTrash size={14} />}
+                onClick={() => handleDelete(folder)}>
+                {t('chat:delete', 'Удалить')}
+              </Menu.Item>
+            </Menu.Dropdown>
+          </Menu>
+        )}
+      </Group>
+    );
+  };
 
   return (
     <Stack gap={4}>
-      {/* ── Внутренние (стиль B — left accent bar) ── */}
-      <Text size="xs" fw={600} c="dimmed" px="sm" py="xs" tt="uppercase">
-        {t('chat:menu.internal', 'Внутренние')}
-      </Text>
+      {/* Обычные папки */}
+      <Group justify="space-between" px="sm" py="xs">
+        <Text size="xs" fw={600} c="dimmed" tt="uppercase">
+          {t('chat:menu.folders', 'Папки')}
+        </Text>
+        <ActionIcon
+          variant="subtle"
+          size="sm"
+          onClick={openCreate}
+          title={t('chat:menu.newFolder', 'Новая папка')}>
+          <IconPlus size={16} />
+        </ActionIcon>
+      </Group>
 
-      {INTERNAL_ITEMS.map(item => {
-        const Icon = item.icon;
-        const isActive = currentPath === item.to;
+      {regularFolders.map(f => renderFolder(f, builtinIcon(f), f.name))}
 
-        return (
-          <UnstyledButton
-            key={item.id}
-            className={`${classes.item} ${classes.internal}`}
-            data-active={isActive || undefined}
-            onClick={() => navigate(item.to)}>
-            <Group gap="sm">
-              <Icon size={18} />
-              <Text size="sm" fw={isActive ? 600 : 400}>
-                {t(item.labelKey, item.fallback)}
-              </Text>
-            </Group>
-          </UnstyledButton>
-        );
-      })}
-
-      {/* ── Разделитель + заголовок ── */}
-      {hasExternal && (
-        <Divider
-          my="sm"
-          mx="sm"
-          labelPosition="left"
-          label={
-            <Text size="xs" fw={600} c="dimmed" tt="uppercase">
-              {t('chat:menu.external', 'Внешние')}
-            </Text>
-          }
-        />
+      {/* Коннекторы — отдельная секция «Внешние» */}
+      {connectorFolders.length > 0 && (
+        <Text size="xs" fw={600} c="dimmed" px="sm" py="xs" tt="uppercase">
+          {t('chat:menu.external', 'Внешние')}
+        </Text>
       )}
 
-      {/* ── Все внешние ── */}
-      {hasExternal &&
-        (() => {
-          const isActive = currentPath === '/chat?is_internal=false';
-          return (
-            <UnstyledButton
-              className={`${classes.item} ${classes.external}`}
-              data-active={isActive || undefined}
-              onClick={() => navigate('/chat?is_internal=false')}
-              style={
-                {
-                  '--c-icon': '#0ea5e9',
-                  '--c-active-bg': 'rgba(14, 165, 233, 0.1)',
-                  '--c-active-text': '#0369a1',
-                } as React.CSSProperties
-              }>
-              <Group gap="sm">
-                <IconWorld size={18} />
-                <Text size="sm" fw={isActive ? 600 : 400}>
-                  {t('chat:menu.allExternal', 'Все')}
-                </Text>
-              </Group>
-            </UnstyledButton>
+      {connectorFolders.map(f => {
+        const cid = connectorId(f);
+        const conn = cid != null ? connMap.get(cid) : undefined;
+        const label =
+          conn?.name ||
+          (typeof f.connector_id === 'object' ? f.connector_id?.name : null) ||
+          f.name;
+        const iconNode =
+          (conn && CONNECTOR_ICONS[conn.type]) || (
+            <IconMessageCircle size={18} />
           );
-        })()}
-
-      {/* ── Динамические коннекторы (стиль A — colored pills) ── */}
-      {externalItems.map(item => {
-        const theme = CONNECTOR_THEME[item.type];
-        const color = theme?.color || DEFAULT_THEME.color;
-        const activeBg = theme?.activeBg || DEFAULT_THEME.activeBg;
-        const activeText = theme?.activeText || DEFAULT_THEME.activeText;
-        const Icon = theme?.icon || IconMessageCircle;
-        const isActive = currentPath === item.to;
-
-        return (
-          <UnstyledButton
-            key={item.id}
-            className={`${classes.item} ${classes.external}`}
-            data-active={isActive || undefined}
-            onClick={() => navigate(item.to)}
-            style={
-              {
-                '--c-icon': color,
-                '--c-active-bg': activeBg,
-                '--c-active-text': activeText,
-              } as React.CSSProperties
-            }>
-            <Group gap="sm">
-              <Icon size={18} />
-              <Text size="sm" fw={isActive ? 600 : 400}>
-                {t(item.labelKey, item.fallback)}
-              </Text>
-            </Group>
-          </UnstyledButton>
-        );
+        return renderFolder(f, iconNode, label);
       })}
+
+      <FolderModal
+        opened={modalOpen}
+        onClose={() => setModalOpen(false)}
+        folder={editing}
+      />
     </Stack>
   );
 }

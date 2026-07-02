@@ -114,6 +114,7 @@ export function ChatPage({
   const isInternalParam = searchParams.get('is_internal');
   const chatTypeParam = searchParams.get('chat_type');
   const connectorTypeParam = searchParams.get('connector_type');
+  const folderIdParam = searchParams.get('folder_id');
 
   // Формируем фильтр для API
   const chatFilter = {
@@ -125,6 +126,7 @@ export function ChatPage({
           : undefined,
     chat_type: chatTypeParam as 'direct' | 'group' | undefined,
     connector_type: connectorTypeParam || undefined,
+    folder_id: folderIdParam ? Number(folderIdParam) : undefined,
   };
 
   // Аргументы для getChats - исключаем undefined значения для корректного сравнения в RTK Query
@@ -134,6 +136,7 @@ export function ChatPage({
       is_internal?: boolean;
       chat_type?: string;
       connector_type?: string;
+      folder_id?: number;
     } = { limit: 100 };
     if (chatFilter.is_internal !== undefined)
       args.is_internal = chatFilter.is_internal;
@@ -141,8 +144,15 @@ export function ChatPage({
       args.chat_type = chatFilter.chat_type;
     if (chatFilter.connector_type !== undefined)
       args.connector_type = chatFilter.connector_type;
+    if (chatFilter.folder_id !== undefined)
+      args.folder_id = chatFilter.folder_id;
     return args;
-  }, [chatFilter.is_internal, chatFilter.chat_type, chatFilter.connector_type]);
+  }, [
+    chatFilter.is_internal,
+    chatFilter.chat_type,
+    chatFilter.connector_type,
+    chatFilter.folder_id,
+  ]);
 
   const [markChatAsRead] = useMarkChatAsReadMutation();
 

@@ -15,6 +15,7 @@ from ..schemas.chat import (
     ChatUpdate,
     AddMemberInput,
     UpdateMemberPermissions,
+    ChatPin,
 )
 from ..models.chat_member import ChatMember
 from ._system_messages import post_system_message
@@ -78,6 +79,10 @@ async def get_chats(
     connector_type: str | None = Query(
         None, description="Фильтр по коннектору: telegram, whatsapp, etc"
     ),
+    folder_id: int | None = Query(
+        None,
+        description="Фильтр по папке чатов пользователя (chat_folder.id)",
+    ),
     include_deleted: int = Query(
         0, description="Показать удалённые чаты (active=false)"
     ),
@@ -138,7 +143,7 @@ async def get_chats(
         params: list = []
     else:
         base_query = """
-            SELECT DISTINCT c.id, c.last_message_date
+            SELECT DISTINCT c.id, c.last_message_date, cm.is_pinned
             FROM chat c
             JOIN chat_member cm ON c.id = cm.chat_id AND cm.is_active = true
         """
@@ -188,16 +193,68 @@ async def get_chats(
             """
             params.insert(0, contact_type_id_for_filter.id)
 
+    # Фильтр по папке. Папка хранит domain (JSON) над chat. Правила доступа
+    # chat_folder уже ограничивают выборку своими + глобальными папками, так
+    # что чужую папку сюда не передать. Папка коннектора (connector_id задан)
+    # резолвится по chat_external_chat — набор коннектора не выразить обычным
+    # domain над chat. Остальные — штатным ORM-поиском по domain.
+    if folder_id is not None:
+        folder_rows = await env.models.chat_folder.search(
+            filter=[("id", "=", folder_id)],
+            fields=["id", "domain", "connector_id"],
+            limit=1,
+        )
+        if not folder_rows:
+            return {"data": [], "total": 0}
+        folder = folder_rows[0]
+
+        # Many2one может вернуться как запись ({id,...}) или как голый id.
+        conn = folder.connector_id
+        if conn:
+            ext_rows = await session.execute(
+                "SELECT DISTINCT chat_id FROM chat_external_chat "
+                "WHERE connector_id = %s",
+                (conn.id,),
+            )
+            ext_ids = [r["chat_id"] for r in ext_rows]
+            if not ext_ids:
+                return {"data": [], "total": 0}
+            conditions.append("c.id = ANY(%s)")
+            params.append(ext_ids)
+        else:
+            domain = folder.domain or []
+            if domain:
+                matched = await env.models.chat.search(
+                    filter=domain, fields=["id"], limit=10000
+                )
+                matched_ids = [m.id for m in matched]
+                if not matched_ids:
+                    return {"data": [], "total": 0}
+                conditions.append("c.id = ANY(%s)")
+                params.append(matched_ids)
+
     where_clause = " AND ".join(conditions) if conditions else "TRUE"
+
+    # Закреплённые чаты сверху. В foreign-режиме нет cm-джойна → без закрепа.
+    if _show_foreign:
+        order_by = "c.last_message_date DESC NULLS LAST"
+    else:
+        order_by = "cm.is_pinned DESC, c.last_message_date DESC NULLS LAST"
+
     chat_ids_query = f"""
         {base_query}
         WHERE {where_clause}
-        ORDER BY c.last_message_date DESC NULLS LAST
+        ORDER BY {order_by}
         LIMIT %s OFFSET %s
     """
     all_params = params + [limit, offset]
 
     chat_id_rows = await session.execute(chat_ids_query, tuple(all_params))
+
+    # Карта закрепа: id чата → is_pinned (в foreign-режиме поля нет → False).
+    pinned_by_id = {
+        row["id"]: bool(row.get("is_pinned", False)) for row in chat_id_rows
+    }
 
     if not chat_id_rows:
         return {"data": [], "total": 0}
@@ -404,6 +461,7 @@ async def get_chats(
             ),
             "unread_count": unread_by_chat.get(chat.id, 0),
             "members": members_by_chat.get(chat.id, []),
+            "is_pinned": pinned_by_id.get(chat.id, False),
         }
 
         last_msg = last_message_by_chat.get(chat.id)
@@ -435,12 +493,36 @@ async def get_chats(
 
         result.append(chat_data)
 
+    # Закреплённые сверху, затем по дате последнего сообщения.
     sorted_list = sorted(
         result,
-        key=lambda x: x.get("last_message_date") or x.get("create_datetime"),
+        key=lambda x: (
+            1 if x.get("is_pinned") else 0,
+            x.get("last_message_date") or x.get("create_datetime") or "",
+        ),
         reverse=True,
     )
     return {"data": sorted_list, "total": len(sorted_list)}
+
+
+@router_private.post("/chats/{chat_id}/pin")
+async def pin_chat(req: Request, chat_id: int, body: ChatPin):
+    """
+    Закрепить/открепить чат для текущего пользователя.
+
+    Закреп — per-user состояние (chat_member.is_pinned). Закреплённые чаты
+    идут сверху списка getChats.
+    """
+    auth_session: "Session" = req.state.session
+    user_id = auth_session.user_id.id
+
+    # Проверяем активное членство (бросит ACCESS_DENIED если не участник).
+    member = await ChatMember.check_membership(chat_id, user_id)
+
+    env: "Environment" = req.app.state.env
+    await member.update(env.models.chat_member(is_pinned=body.pinned))
+
+    return {"success": True, "is_pinned": body.pinned}
 
 
 @router_private.get("/chats/{chat_id}")

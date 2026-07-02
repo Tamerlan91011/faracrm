@@ -120,6 +120,7 @@ const menuTree: GroupConfig[] = [
         visibleForRoles: ['system_admin'] as string[],
         submenus: [
           { model: 'chat_connector' },
+          { model: 'chat_folder' },
           { model: 'chat_external_account' },
           { model: 'chat_external_chat' },
           { model: 'chat_external_message' },

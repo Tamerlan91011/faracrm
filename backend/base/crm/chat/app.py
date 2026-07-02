@@ -52,6 +52,7 @@ class ChatApp(Service):
         "chat_external_chat": ACL.FULL,
         "chat_external_message": ACL.FULL,
         "chat_routing_rule_lead": ACL.FULL,
+        "chat_folder": ACL.FULL,
     }
 
     async def startup(self, app: "FastAPI"):
@@ -136,6 +137,12 @@ class ChatApp(Service):
         # await self._init_chat_rules(env)
         await self._init_membership_rules(env)
         await self._init_system_settings(env)
+
+        # Глобальные дефолтные папки (Все/Личные/Группы). Идемпотентно.
+        try:
+            await env.models.chat_folder.ensure_global_defaults()
+        except Exception as exc:
+            logger.warning("chat_folder global defaults skipped: %s", exc)
 
     async def _init_membership_rules(self, env: "Environment"):
         """
@@ -222,6 +229,27 @@ class ChatApp(Service):
             model_name="chat_message_reaction",
             domain=[["@has_parent_access", "chat_message", "message_id"]],
             perms={"read": True, "create": True, "delete": True},
+        )
+
+        # ChatFolder — читать можно свои + глобальные (user_id IS NULL:
+        # Все/Личные/Группы/коннекторы). Create — на уровне ACL (user_id
+        # проставляется default'ом = текущий).
+        await create_rule_if_missing(
+            name="ChatFolder: read own and global folders",
+            model_name="chat_folder",
+            domain=[
+                ["user_id", "=", "{{user_id}}"],
+                "or",
+                ["user_id", "=", None],
+            ],
+            perms={"read": True},
+        )
+        # Редактировать / удалять — ТОЛЬКО свои (у глобальных user_id IS NULL).
+        await create_rule_if_missing(
+            name="ChatFolder: update and delete own folders",
+            model_name="chat_folder",
+            domain=[["user_id", "=", "{{user_id}}"]],
+            perms={"update": True, "delete": True},
         )
 
     async def _init_system_settings(self, env: "Environment"):

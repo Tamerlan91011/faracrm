@@ -122,6 +122,7 @@ const modelToNamespace: Record<string, string> = {
   chat_external_account: 'chat',
   chat_external_chat: 'chat',
   chat_external_message: 'chat',
+  chat_folder: 'chat',
   products: 'products',
   category: 'products',
   uom: 'products',
